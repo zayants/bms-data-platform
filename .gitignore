@@ -1,0 +1,7 @@
+*.apk
+*.aab
+*.zip
+*.jks
+*.keystore
+keystore.properties
+
