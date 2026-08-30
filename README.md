@@ -1,78 +1,70 @@
-# BMS Data Platform
+# BMS Data Platform — Desktop Monitor 0.7.7
 
-Phone gateway and desktop dashboard for long-term, read-only monitoring of JK/Jikong battery management systems.
+Компьютерный монитор получает живые данные от Android-телефона-шлюза по
+локальной Wi-Fi-сети. Облачные сервисы не используются, команды изменения
+настроек BMS не передаются.
 
-> Early public preview. Please report your BMS model, firmware and Android version when opening an issue.
+## Возможности 0.7.7
 
-[Download the latest release](https://github.com/zayants/bms-data-platform/releases/latest) · [Инструкция по подключению](docs/connection-guide-ru.md)
+- отдельная страница «Функции» как центр будущей диагностики;
+- доступные модули диагностики SOC, сопротивления ячеек, порогов и качества связи;
+- подготовленные модули анализа состояния ячеек и автоматического поиска аномалий;
+- выбор языка интерфейса перенесён в раздел «Настройки»;
 
-![Desktop overview](screenshots/desktop-overview.png)
+- обзор SOC, напряжения, тока, мощности, температуры и разбаланса;
+- визуализация потока энергии;
+- сетка от 4 до 64 ячеек с минимумом, максимумом и средним;
+- единое большое временное окно с выбираемыми каскадными графиками;
+- добавление параметров перетаскиванием или через выпадающий список;
+- одновременное сравнение напряжения, тока, мощности, SOC, температуры и разбаланса;
+- отдельная полоса и собственная шкала Y с реальными единицами для каждого параметра;
+- общая ось времени X и точные значения всех параметров под единым курсором;
+- полноэкранный режим для основных графиков;
+- масштабирование общей оси времени выделением области на графике либо правой кнопкой + колесом в полноэкранном режиме;
+- нижний навигатор времени: окно можно перемещать вправо-влево и растягивать за края;
+- двойной щелчок по полноэкранному графику возвращает весь выбранный период;
+- отдельная вкладка настроек графиков;
+- единый график напряжения ячеек с индивидуальным включением кривых и возможностью совмещения с другими параметрами;
+- более тонкие диагностические кривые;
+- пороги ячеек показываются в том же графике, когда дополнительные параметры отключены, и скрываются в комбинированном режиме;
+- линии защитных температурных порогов, прочитанных непосредственно из BMS;
+- пользовательские верхние и нижние пороги для напряжения ячеек, батареи, тока, мощности, SOC, температуры, разбаланса и расчётного сопротивления;
+- настройка порогов непосредственно из шапки каждого отдельного графика с синхронизацией общей вкладки настроек;
+- независимое включение порогов на каждом отдельном графике;
+- независимое включение подписей порогов, событий SOC и теней кривых;
+- выбор и сохранение цвета каждой кривой;
+- общий график истории напряжений от 4 до 32 ячеек с индивидуальным включением;
+- расчётное внутреннее сопротивление ячеек и отдельный график его истории;
+- совмещение ячеек с током, SOC, мощностью, температурой и разбалансом на общей оси времени;
+- несглаживаемые метки переходов SOC к 0% и 100%;
+- диагностические карточки с параметрами батареи и всех ячеек в момент перехода SOC;
+- отдельные графики напряжения, тока, мощности, SOC, температуры и разбаланса;
+- полноэкранный режим каждого отдельного графика с выбором периода без выхода из него;
+- X–Y-график корреляции тока и мощности с коэффициентом корреляции;
+- периоды: час, сутки, неделя, месяц и год;
+- журнал событий текущего сеанса;
+- компактная история потери и восстановления связи в нижней части страницы подключения;
+- постоянный журнал потери и восстановления связи с длительностью обрыва;
+- контроль свежести данных и потери связи;
+- сохранение адреса шлюза;
+- EN, UK, RU, DE, PL, ES, FR и CS;
+- адаптивная компоновка для компьютеров и планшетов.
 
-## Why this project exists
+## Запуск готовой Windows-версии
 
-The phone stays near the battery, maintains the Bluetooth connection and stores telemetry. Any Windows computer on the same local Wi-Fi network can then show a full monitoring dashboard and analyze the history. No cloud account is required and the first version does not write protection settings to the BMS.
+Распакуйте архив `BMS-Data-Platform-0.7.7-Windows-x64.zip` и запустите
+`BMS Data Platform.exe`. Установка и права администратора не требуются.
 
-## Current components
+На телефоне должен быть включён локальный Wi-Fi-шлюз. В разделе
+«Подключение» введите адрес, показанный телефоном, например
+`http://192.168.0.188:8765`.
 
-- **BMS Gateway 0.3.3 for Android 8.0+** — BLE discovery, manual BMS selection, automatic reconnection, live battery data, up to 32 cell voltages, one year of local history, CSV export and a local Wi-Fi API.
-- **Desktop Monitor 0.6.4 for Windows x64** — live overview, cell monitoring, cascaded multi-parameter history, individual fullscreen charts, selectable periods, cell-voltage comparison, SOC boundary diagnostics and current/power correlation.
-- Interface languages: English, Ukrainian, Russian, German, Polish, Spanish, French and Czech.
+## Разработка
 
-## BMS compatibility
-
-The gateway currently implements automatic detection for JK/Jikong telemetry variants:
-
-- JK02 up to 24S;
-- JK02 PB / 32S;
-- JK04 used by older models.
-
-It has been tested on available JK/Jikong hardware, but the model range is large and firmware behaviour varies. Models not yet tested are exactly why this preview is public. If your BMS does not work, please open an issue with the advertised Bluetooth name, exact model, firmware version and a screenshot of the connection page.
-
-## Connection
-
-1. Install BMS Gateway on the Android phone near the battery.
-2. Enable Bluetooth and, when required by Android, system location. Run the full 25-second scan and select the BMS.
-3. Connect the phone and computer to the same Wi-Fi network.
-4. Enable the local Wi-Fi gateway on the phone and copy the displayed `http://...:8765` address.
-5. Enter that address on the Desktop Monitor connection page.
-
-![Android gateway](screenshots/android-gateway-status.png)
-
-| Phone Wi-Fi gateway | Desktop connection |
-|---|---|
-| ![Wi-Fi gateway](screenshots/android-wifi-gateway.png) | ![Desktop connection](screenshots/desktop-connection.png) |
-
-## History and diagnostics
-
-![History charts](screenshots/desktop-history.png)
-
-The Android phone is the logger and gateway. It records samples locally every 30 seconds and exposes them only to devices on the local network. The desktop app can combine cell voltages with current, SOC, power, temperature and imbalance on the same time axis.
-
-## Privacy and safety
-
-- Local operation without a mandatory cloud account.
-- No location data is read or stored; some Android versions require location to be enabled for BLE discovery.
-- Read-only BMS telemetry in this preview.
-- No modification of BMS protection parameters.
-- One BMS normally accepts only one active Bluetooth application at a time; close the official JK app before connecting the gateway.
-
-## Downloads
-
-Open [Releases](https://github.com/zayants/bms-data-platform/releases) and download:
-
-- `BMS-Gateway-0.3.3-Android.apk` for the phone;
-- `BMS-Data-Platform-0.6.4-Windows-x64.zip` for the computer;
-- `BMS-Connection-Guide-Telegram.zip` for the Russian connection guide and screenshots.
-
-The source code is not distributed in this public download repository. Copyright © 2026 zayants. All rights reserved.
-
----
-
-## Русский
-
-BMS Data Platform — система долговременного мониторинга JK/Jikong BMS. Телефон находится рядом с аккумулятором, поддерживает Bluetooth-связь, хранит историю и работает как локальный Wi-Fi-шлюз. Компьютер получает данные через домашнюю сеть и показывает полноценный монитор с графиками.
-
-Для начала скачайте APK и Windows-архив в разделе [Releases](https://github.com/zayants/bms-data-platform/releases), затем воспользуйтесь [подробной инструкцией подключения](docs/connection-guide-ru.md).
-
-Проект пока находится на стадии публичного тестирования. Отзывы о неподдерживаемых моделях JK/Jikong особенно полезны: указывайте модель BMS, версию прошивки, имя Bluetooth-устройства и модель телефона.
-
+```powershell
+pnpm install
+pnpm test
+pnpm dev
+pnpm build
+pnpm package:win
+```
