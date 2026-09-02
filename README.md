@@ -1,90 +1,84 @@
-# BMS Data Platform — Desktop Monitor 0.7.31
+# BMS Data Platform
 
-Компьютерный монитор получает живые данные от Android-телефона-шлюза по
-локальной Wi-Fi-сети. Облачные сервисы не используются, команды изменения
-настроек BMS не передаются.
+Read-only monitoring system for JK/Jikong BMS: an Android phone works as a Bluetooth gateway and logger, while the Windows dashboard provides a large local-network view and long-term diagnostics.
 
-## Возможности 0.7.31
+**Latest release: 0.7.31** · [Download APK and Windows package](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.31) · [Connection guide](docs/connection-guide-ru.md)
 
-- отдельная страница «Функции» как центр будущей диагностики;
-- доступные модули диагностики SOC, сопротивления ячеек, порогов и качества связи;
-- подготовленные модули анализа состояния ячеек и автоматического поиска аномалий;
-- выбор языка интерфейса перенесён в раздел «Настройки»;
+![Desktop overview](screenshots/desktop-overview.png)
 
-- обзор SOC, напряжения, тока, мощности, температуры и разбаланса;
-- визуализация потока энергии;
-- сетка от 4 до 64 ячеек с минимумом, максимумом и средним;
-- единое большое временное окно с выбираемыми каскадными графиками;
-- добавление параметров перетаскиванием или через выпадающий список;
-- одновременное сравнение напряжения, тока, мощности, SOC, температуры и разбаланса;
-- отдельная полоса и собственная шкала Y с реальными единицами для каждого параметра;
-- общая ось времени X и точные значения всех параметров под единым курсором;
-- полноэкранный режим для основных графиков;
-- масштабирование общей оси времени выделением области на графике либо правой кнопкой + колесом в полноэкранном режиме;
-- нижний навигатор времени: окно можно перемещать вправо-влево и растягивать за края;
-- двойной щелчок по полноэкранному графику возвращает весь выбранный период;
-- отдельная вкладка настроек графиков;
-- единый график напряжения ячеек с индивидуальным включением кривых и возможностью совмещения с другими параметрами;
-- более тонкие диагностические кривые;
-- пороги ячеек показываются в том же графике, когда дополнительные параметры отключены, и скрываются в комбинированном режиме;
-- линии защитных температурных порогов, прочитанных непосредственно из BMS;
-- пользовательские верхние и нижние пороги для напряжения ячеек, батареи, тока, мощности, SOC, температуры, разбаланса и расчётного сопротивления;
-- настройка порогов непосредственно из шапки каждого отдельного графика с синхронизацией общей вкладки настроек;
-- независимое включение порогов на каждом отдельном графике;
-- независимое включение подписей порогов, событий SOC и теней кривых;
-- выбор и сохранение цвета каждой кривой;
-- общий график истории напряжений от 4 до 32 ячеек с индивидуальным включением;
-- расчётное внутреннее сопротивление ячеек и отдельный график его истории;
-- совмещение ячеек с током, SOC, мощностью, температурой и разбалансом на общей оси времени;
-- несглаживаемые метки переходов SOC к 0% и 100%;
-- диагностические карточки с параметрами батареи и всех ячеек в момент перехода SOC;
-- отдельные графики напряжения, тока, мощности, SOC, температуры и разбаланса;
-- полноэкранный режим каждого отдельного графика с выбором периода без выхода из него;
-- X–Y-график корреляции тока и мощности с коэффициентом корреляции;
-- периоды: час, сутки, неделя, месяц и год;
-- журнал событий текущего сеанса;
-- компактная история потери и восстановления связи в нижней части страницы подключения;
-- постоянный журнал потери и восстановления связи с длительностью обрыва;
-- контроль свежести данных и потери связи;
-- сохранение адреса шлюза;
-- EN, UK, RU, DE, PL, ES, FR и CS;
-- адаптивная компоновка для компьютеров и планшетов.
+## What it is for
 
-## Запуск готовой Windows-версии
+The phone stays near the battery, keeps the BLE connection and stores telemetry locally. A computer, tablet or TV on the same Wi-Fi network can open the dashboard in a browser or use the Windows monitor. No cloud account is required.
 
-Распакуйте архив `BMS-Data-Platform-0.7.31-Windows-x64.zip` и запустите
-`BMS Data Platform.exe`. Установка и права администратора не требуются.
+## Included
 
-На телефоне должен быть включён локальный Wi-Fi-шлюз. В разделе
-«Подключение» введите адрес, показанный телефоном, например
-`http://192.168.0.188:8765`.
+- **BMS Gateway 0.4.5 (Android 8.0+)** — scan and manually select a BMS, live telemetry, automatic reconnect, up to 32 cells, local history, CSV export and local Wi-Fi API.
+- **BMS Data Platform 0.7.31 (Windows x64)** — overview, energy flow, cell grid, stale-data indication, history, configurable charts, BMS and user thresholds, SOC boundary markers, imbalance diagnostics, SQL/Excel export and incremental history synchronisation.
+- English, Ukrainian, Russian, German, Polish, Spanish, French and Czech interface resources.
 
-## Разработка
+## Screenshots
 
-```powershell
-pnpm install
-pnpm test
-pnpm dev
-pnpm build
-pnpm package:win
-```
+| Android gateway | Windows overview |
+|---|---|
+| ![Android gateway](screenshots/android-gateway-status.png) | ![Windows overview](screenshots/desktop-overview.png) |
 
-## English overview
+| Phone Wi-Fi gateway | History and diagnostics |
+|---|---|
+| ![Phone Wi-Fi gateway](screenshots/android-wifi-gateway.png) | ![History charts](screenshots/desktop-history.png) |
 
-BMS Data Platform is a read-only local monitor for JK/Jikong BMS. The Android
-gateway stays near the battery, reads Bluetooth telemetry and makes it available
-to the Windows monitor over the local Wi-Fi network. No cloud account is needed.
+![Desktop connection](screenshots/desktop-connection.png)
 
-The monitor provides live SOC, pack voltage, current, power, temperatures,
-balancing and MOSFET status, configurable cell views for 4–32 cells, event and
-connection history, long-term charts, independent cell curves, BMS and custom
-thresholds, SOC 0/100% markers, indirect resistance trends and Excel export.
-The QR code and numeric address in the connection screen make opening the local
-monitor on another device straightforward.
+## Compatibility and safety
 
-The package contains:
+The gateway supports JK/Jikong telemetry variants based on JK02 and JK04 protocols, including many 8S–32S models. Firmware and Bluetooth naming vary, so reports from untested BMS models are welcome.
 
-- `BMS-Gateway-0.4.5-Android.apk` — phone gateway;
-- `BMS-Data-Platform-0.7.31-Windows-x64.zip` — Windows monitor.
+The preview is read-only: it does not change protection parameters or write settings to the BMS. Bluetooth discovery may require Android system Location to be enabled, although the app does not read or store location. Close the official JK app before connecting because a BMS normally accepts one active Bluetooth client at a time.
 
-This release remains read-only: it does not change BMS protection settings.
+## Quick start
+
+1. Install the Android APK on a phone placed near the battery.
+2. Enable Bluetooth and, if Android requests it, system Location. Scan and select the required BMS.
+3. Connect phone and computer to the same Wi-Fi network.
+4. Enable the phone Wi-Fi gateway and copy its local address.
+5. Enter that address on the Windows monitor connection page.
+
+## Downloads
+
+- [Android Gateway 0.4.5 APK](https://github.com/zayants/bms-data-platform/releases/download/v0.7.31/BMS-Gateway-0.4.5-Android.apk)
+- [Windows Monitor 0.7.31 x64](https://github.com/zayants/bms-data-platform/releases/download/v0.7.31/BMS-Data-Platform-0.7.31-Windows-x64.zip)
+- [All release files](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.31)
+
+---
+
+## Русская версия
+
+**BMS Data Platform** — система мониторинга JK/Jikong BMS только для чтения. Телефон находится рядом с аккумулятором, поддерживает Bluetooth-связь и записывает историю. Компьютер, планшет или телевизор в той же Wi-Fi-сети могут отображать данные через браузер или Windows-монитор.
+
+**Последняя версия: 0.7.31** · [Скачать APK и Windows-архив](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.31) · [Инструкция по подключению](docs/connection-guide-ru.md)
+
+### Возможности
+
+- **BMS Gateway 0.4.5 для Android 8.0+** — поиск и ручной выбор BMS, текущие параметры, автопереподключение, до 32 ячеек, локальная история, экспорт CSV и локальный Wi-Fi API.
+- **BMS Data Platform 0.7.31 для Windows x64** — обзор батареи, поток энергии, состояние соединения и устаревших данных, ячейки, история, настраиваемые графики, пороги BMS и пользователя, метки SOC 0/100%, диагностика разбаланса, экспорт SQL/Excel и дозагрузка отсутствующего фрагмента истории с телефона.
+- Интерфейс: русский, английский, украинский, немецкий, польский, испанский, французский и чешский.
+
+### Подключение
+
+1. Установите APK на телефон и разместите его рядом с аккумулятором.
+2. Включите Bluetooth и, если требует Android, системную геолокацию. Выполните сканирование и выберите нужную BMS.
+3. Подключите телефон и компьютер к одной Wi-Fi-сети.
+4. Включите Wi-Fi-шлюз на телефоне и скопируйте показанный локальный адрес.
+5. Введите адрес на странице подключения Windows-монитора.
+
+### Важно
+
+Предпросмотр работает только в режиме чтения и не изменяет защитные параметры BMS. Геолокация нужна некоторым версиям Android для обнаружения BLE, но приложение не читает и не сохраняет координаты. Перед подключением закройте официальное приложение JK: одна BMS обычно принимает только одного Bluetooth-клиента.
+
+### Скачать
+
+- [APK для телефона 0.4.5](https://github.com/zayants/bms-data-platform/releases/download/v0.7.31/BMS-Gateway-0.4.5-Android.apk)
+- [Windows-монитор 0.7.31 x64](https://github.com/zayants/bms-data-platform/releases/download/v0.7.31/BMS-Data-Platform-0.7.31-Windows-x64.zip)
+- [Страница релиза](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.31)
+
+Проект находится в публичном тестировании. Если ваша BMS не подключается, сообщите модель, прошивку, имя Bluetooth-устройства и версию Android.
+
