@@ -1,10 +1,10 @@
-# BMS Data Platform — Desktop Monitor 0.7.30
+# BMS Data Platform — Desktop Monitor 0.7.31
 
 Компьютерный монитор получает живые данные от Android-телефона-шлюза по
 локальной Wi-Fi-сети. Облачные сервисы не используются, команды изменения
 настроек BMS не передаются.
 
-## Возможности 0.7.30
+## Возможности 0.7.31
 
 - отдельная страница «Функции» как центр будущей диагностики;
 - доступные модули диагностики SOC, сопротивления ячеек, порогов и качества связи;
@@ -52,7 +52,7 @@
 
 ## Запуск готовой Windows-версии
 
-Распакуйте архив `BMS-Data-Platform-0.7.30-Windows-x64.zip` и запустите
+Распакуйте архив `BMS-Data-Platform-0.7.31-Windows-x64.zip` и запустите
 `BMS Data Platform.exe`. Установка и права администратора не требуются.
 
 На телефоне должен быть включён локальный Wi-Fi-шлюз. В разделе
@@ -85,6 +85,6 @@ monitor on another device straightforward.
 The package contains:
 
 - `BMS-Gateway-0.4.5-Android.apk` — phone gateway;
-- `BMS-Data-Platform-0.7.30-Windows-x64.zip` — Windows monitor.
+- `BMS-Data-Platform-0.7.31-Windows-x64.zip` — Windows monitor.
 
 This release remains read-only: it does not change BMS protection settings.

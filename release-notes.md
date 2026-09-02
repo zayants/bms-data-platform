@@ -22,3 +22,18 @@ Highlights:
 This is an early compatibility preview. Please report the exact BMS model and firmware if the gateway cannot read telemetry.
 
 SHA-256 checksums are included in the release assets.
+## 0.7.31
+
+- Локальная синхронизация истории с телефона: первая установка загружает весь доступный архив, последующие запуски догружают только пропущенные записи.
+- История хранится на компьютере отдельно для каждой BMS и доступна при временно недоступном телефоне.
+- Добавлен банер устаревших данных при потере связи.
+- Экспорт полной локальной истории в SQLite-compatible SQL и Excel перенесён в раздел «Настройки».
+- Название функции приведено к единому виду: «Сравнение ячеек при одинаковой нагрузке».
+
+## 0.7.31 (English)
+
+- Local phone-to-PC history synchronization: the first setup downloads the available archive, later runs fetch only missing records.
+- History is stored on the computer per BMS device and remains available when the phone is temporarily offline.
+- Added a stale-data warning when the gateway connection is lost.
+- Full local history export to SQLite-compatible SQL and Excel is available in Settings.
+- Unified feature name: “Cell comparison at the same load”.
