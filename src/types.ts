@@ -124,6 +124,27 @@ export type HistoryResponse = {
   chargeSessions?: ChargeSessionRecord[];
 };
 
+export type HistorySyncMetaResponse = {
+  apiVersion: number;
+  serverTime: number;
+  deviceName: string;
+  deviceAddress: string;
+  recordCount: number;
+  oldestTimestamp: number | null;
+  newestTimestamp: number | null;
+  detailOldestTimestamp: number | null;
+};
+
+export type HistorySyncPageResponse = {
+  apiVersion: number;
+  from: number;
+  to: number;
+  cursor: number;
+  nextCursor: number;
+  hasMore: boolean;
+  points: HistoryPoint[];
+};
+
 export type ChargeSessionRecord = {
   id: number | string;
   startedAt: number;

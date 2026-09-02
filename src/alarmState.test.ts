@@ -10,8 +10,8 @@ const snapshot = (values: Partial<GatewaySnapshot>): GatewaySnapshot => ({
 
 describe("alarm state", () => {
   it("does not hide an unknown raw alarm bit from an older gateway", () => {
-    const value = snapshot({ alarmMask: 0x80000, alarms: [] });
-    expect(unknownAlarmMask(value)).toBe(0x80000);
+    const value = snapshot({ alarmMask: 0x20000000, alarms: [] });
+    expect(unknownAlarmMask(value)).toBe(0x20000000);
     expect(alarmCount(value)).toBe(1);
   });
 

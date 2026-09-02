@@ -44,6 +44,8 @@ export type IndividualChartMetric = "packVoltageV" | "currentA" | "chargeCurrent
 
 export type HistorySectionVisibility = {
   liveCells: boolean;
+  dischargeCurrentDistribution: boolean;
+  operatingPointCellComparison: boolean;
   compositeChart: boolean;
   cellVoltageChart: boolean;
   cellEnergyEstimate: boolean;
@@ -98,6 +100,8 @@ export const DEFAULT_CHART_SETTINGS: ChartDisplaySettings = {
   symmetricBidirectionalScale: true,
   historySections: {
     liveCells: true,
+    dischargeCurrentDistribution: true,
+    operatingPointCellComparison: true,
     compositeChart: true,
     cellVoltageChart: true,
     cellEnergyEstimate: true,

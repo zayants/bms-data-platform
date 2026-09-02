@@ -20,6 +20,10 @@ import { classifyCell, type CellVisualStatus } from "./cellStatus";
 import { exportHistoryWorkbook, type HistoryExportLabels } from "./historyExcelExport";
 import { cellVoltageAxisRange, packVoltageAxisRange, type VoltageAxisRange } from "./voltageAxis";
 import { alarmCount, isPasswordReminderAlarm, passwordReminder, unknownAlarmMask } from "./alarmState";
+import { DischargeCurrentDistributionPanel } from "./DischargeCurrentDistributionPanel";
+import { OperatingPointCellComparisonPanel } from "./OperatingPointCellComparisonPanel";
+import { subscribeHistorySync, type HistorySyncState } from "./historySync";
+import { exportHistoryDatabaseSql } from "./historyCache";
 
 const makeId = () => typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
   ? crypto.randomUUID()
@@ -77,6 +81,7 @@ function App() {
   const [acknowledgedAlarmKey,setAcknowledgedAlarmKey]=useState<string>("");
   const [chartSettings,setChartSettings]=useState<ChartDisplaySettings>(loadChartSettings);
   const [diagnosticSettings,setDiagnosticSettings]=useState<DiagnosticSettings>(loadDiagnosticSettings);
+  const [historySync,setHistorySync]=useState<HistorySyncState>({status:"idle",deviceKey:"",deviceName:"",downloadedRecords:0,phoneRecordCount:0,cachedFrom:null,cachedTo:null});
   const previousOnline = useRef<boolean | null>(null);
   const previousAlarms = useRef<string | null>(null);
   const t = useMemo(() => translator(language), [language]);
@@ -90,6 +95,7 @@ function App() {
   useEffect(()=>localStorage.setItem("bms-diagnostic-settings-v1",JSON.stringify(diagnosticSettings)),[diagnosticSettings]);
   useEffect(()=>localStorage.setItem("bms-app-theme",theme),[theme]);
   useEffect(()=>localStorage.setItem(MONITOR_EVENTS_STORAGE_KEY,JSON.stringify(events)),[events]);
+  useEffect(()=>subscribeHistorySync(setHistorySync),[]);
 
   useEffect(() => {
     const url = normalizeGatewayUrl(gatewayUrl);
@@ -181,16 +187,18 @@ function App() {
 
     <main className="workspace">
       <header className="topbar">
-        <div><div className="eyebrow">{snapshot?.deviceName || "JK / JIKONG BMS"}</div><h1>{nav.find(([id]) => id === page)?.[2]}</h1></div>
+        <div><div className="eyebrow device-name">{snapshot?.deviceName || "JK / JIKONG BMS"}</div><h1>{nav.find(([id]) => id === page)?.[2]}</h1></div>
         <div className={`live-pill ${connectionState}`}><span className="pulse"/>{stateLabel}<small>{snapshot?.ageMs != null ? `${Math.round(snapshot.ageMs / 100) / 10}s` : "—"}</small></div>
       </header>
+      {connectionState !== "live" && (snapshot || historySync.deviceKey) && <StaleDataBanner t={t}/>} 
+      {historySync.status!=="idle"&&historySync.status!=="complete"&&<HistorySyncBanner state={historySync} t={t}/>} 
 
       {page === "overview" && <Overview snapshot={snapshot} t={t} cellStats={cellStats}/>}
       {page === "history" && <HistoryPage gatewayUrl={gatewayUrl} t={t} language={language} snapshot={snapshot} cellStats={cellStats} chartSettings={chartSettings} setChartSettings={setChartSettings}/>}
       {page === "functions" && <FunctionsPage t={t} diagnosticSettings={diagnosticSettings} setDiagnosticSettings={setDiagnosticSettings}/>} 
       {page === "events" && <EventsPage events={events} chargeSessions={chargeSessions} snapshot={snapshot} t={t} acknowledgedAlarmKey={acknowledgedAlarmKey} onAcknowledge={(key)=>setAcknowledgedAlarmKey(key)} onClearEvents={()=>setEvents([])} onClearChargeSessions={()=>{const now=Date.now();localStorage.setItem("bms-charge-sessions-reset-at",String(now));setChargeSessionsResetAt(now);}}/>}
       {page === "connection" && <ConnectionPage t={t} gatewayUrl={gatewayUrl} draftUrl={draftUrl} setDraftUrl={setDraftUrl} connect={connect} language={language} state={connectionState} snapshot={snapshot} showGattCodes={diagnosticSettings.showGattCodes}/>}
-      {page === "settings" && <GraphSettingsPage t={t} settings={chartSettings} setSettings={setChartSettings} snapshot={snapshot} language={language} setLanguage={setLanguage} theme={theme} setTheme={setTheme}/>}
+      {page === "settings" && <GraphSettingsPage t={t} settings={chartSettings} setSettings={setChartSettings} snapshot={snapshot} language={language} setLanguage={setLanguage} theme={theme} setTheme={setTheme} gatewayUrl={gatewayUrl}/>}
     </main>
   </div>;
 }
@@ -281,6 +289,17 @@ type ChartMarker = { id: string; timestamp: number; visible: boolean };
 
 function seriesColorForValue(series: HistorySeries, value: number): string {
   return value < 0 ? series.directionalColors?.negative ?? series.color : series.directionalColors?.positive ?? series.color;
+}
+
+function HistorySyncBanner({state,t}:{state:HistorySyncState;t:ReturnType<typeof translator>}) {
+  const initial=state.status==="initial",incremental=state.status==="incremental";
+  const percent=state.phoneRecordCount>0?Math.min(100,state.downloadedRecords/state.phoneRecordCount*100):0;
+  const title=t(initial?"historyInitialSync":incremental?"historyIncrementalSync":state.status==="checking"?"historySyncChecking":state.status==="unsupported"?"historySyncUnsupported":"historySyncError");
+  return <section className={`history-sync-banner ${state.status}`}><RefreshCw className={initial||incremental||state.status==="checking"?"spin":""}/><div><strong>{title}</strong><span>{initial?`${state.downloadedRecords.toLocaleString()} / ${state.phoneRecordCount.toLocaleString()} · ${percent.toFixed(1)}%`:incremental?`${state.downloadedRecords.toLocaleString()} ${t("recordedSamples")}`:state.error??t("historySyncLegacy")}</span>{(initial||incremental)&&<i><b style={{width:`${percent}%`}}/></i>}</div></section>;
+}
+
+function StaleDataBanner({t}:{t:ReturnType<typeof translator>}) {
+  return <section className="stale-data-banner" role="status"><Clock3/><div><strong>{t("historyDataStale")}</strong><span>{t("historyDataStaleHint")}</span></div></section>;
 }
 
 const DEFAULT_SIGNED_COLORS: Record<SignedHistoryMetric, DirectionalColors> = {
@@ -424,6 +443,8 @@ function FunctionsPage({t,diagnosticSettings,setDiagnosticSettings}:{t:ReturnTyp
     {icon:Waves,title:t("balanceBehaviourFunction"),description:t("balanceBehaviourFunctionHint"),available:true},
     {icon:BatteryCharging,title:t("cellEnergyFunction"),description:t("cellEnergyFunctionHint"),available:true},
     {icon:Zap,title:t("chargeSessionFunction"),description:t("chargeSessionFunctionHint"),available:true},
+    {icon:Gauge,title:t("workingCurrentFunction"),description:t("workingCurrentFunctionHint"),available:true},
+    {icon:Microscope,title:t("operatingPointTitle"),description:t("operatingPointFunctionHint"),available:true},
     {icon:Microscope,title:t("cellHealthFunction"),description:t("cellHealthFunctionHint"),available:false},
     {icon:BrainCircuit,title:t("anomalyFunction"),description:t("anomalyFunctionHint"),available:false},
   ];
@@ -545,8 +566,6 @@ function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,set
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
-  const [exportingExcel,setExportingExcel]=useState(false);
-  const [exportError,setExportError]=useState(false);
   const [timeZoom, setTimeZoom] = useState<{from:number;to:number}|null>(null);
   const [dragSelection,setDragSelection]=useState<DragZoomSelection|null>(null);
   const autoRefreshInterval = period === "year" ? 60_000 : 15_000;
@@ -613,18 +632,6 @@ function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,set
   const toggleMetric = (id: HistoryMetric) => setSelectedMetrics((current) => current.includes(id) ? current.filter((metric) => metric !== id) : [...current, id]);
   const setSeriesColor = (id: HistoryMetric, color: string) => setSeriesColors((current) => ({...current,[id]:color}));
   const setSignedColor = (id: SignedHistoryMetric, direction: keyof DirectionalColors, color: string) => setSignedColors((current) => ({...current,[id]:{...current[id],[direction]:color}}));
-  const exportExcel=async()=>{
-    if(!history||history.points.length===0||exportingExcel)return;
-    setExportingExcel(true);
-    setExportError(false);
-    const labels:HistoryExportLabels={
-      dataSheet:t("exportDataSheet"),socSheet:t("exportSocSheet"),connectionSheet:t("exportConnectionSheet"),informationSheet:t("exportInformationSheet"),
-      timestamp:t("exportTimestamp"),timestampMs:t("exportTimestampMs"),voltage:t("voltage"),current:t("current"),power:t("power"),soc:t("soc"),temperature:t("temp"),imbalance:t("imbalance"),balancing:t("balance"),alarmMask:t("exportAlarmMask"),
-      cellVoltage:t("cellVoltage"),cellResistance:t("estimatedResistance"),previousSoc:t("exportPreviousSoc"),connectionEvent:t("exportConnectionEvent"),durationSeconds:t("exportDurationSeconds"),bmsName:t("exportBmsName"),gattStatus:t("gattCode"),
-      exportCreated:t("exportCreated"),periodFrom:t("exportPeriodFrom"),periodTo:t("exportPeriodTo"),sourceRecords:t("recordedSamples"),exportedPoints:t("exportedPoints"),aggregationInterval:t("exportAggregationSeconds"),lost:t("connectionLost"),restored:t("connectionRestored"),
-    };
-    try{await exportHistoryWorkbook(history,labels);}catch{setExportError(true);}finally{setExportingExcel(false);}
-  };
   const handleHistoryWheel = (event:ReactWheelEvent<HTMLDivElement>) => {
     const target=event.target as Element;
     const chart=target.closest("svg");
@@ -682,6 +689,8 @@ function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,set
   return <div className={`page-content history-page ${dragSelection?"selecting-time":""}`} onWheel={handleHistoryWheel} onContextMenu={handleChartContextMenu} onPointerDown={handleZoomPointerDown} onPointerMove={handleZoomPointerMove} onPointerUp={handleZoomPointerEnd} onPointerCancel={handleZoomPointerEnd} onDoubleClick={handleChartDoubleClick}>
     {dragSelection&&<div className="time-selection-overlay" style={{left:Math.min(dragSelection.startX,dragSelection.currentX),top:dragSelection.top,width:Math.abs(dragSelection.currentX-dragSelection.startX),height:dragSelection.height}}/>}
     {chartSettings.historySections.liveCells&&<CellsOverview snapshot={snapshot} t={t} cellStats={cellStats}/>}
+    {chartSettings.historySections.dischargeCurrentDistribution&&<DischargeCurrentDistributionPanel gatewayUrl={gatewayUrl} language={language} t={t} onHide={()=>hideHistorySection("dischargeCurrentDistribution")}/>} 
+    {chartSettings.historySections.operatingPointCellComparison&&<OperatingPointCellComparisonPanel gatewayUrl={gatewayUrl} language={language} t={t} onHide={()=>hideHistorySection("operatingPointCellComparison")}/>} 
     <section className="panel history-toolbar">
       <div><span>{t("period")}</span><div className="period-buttons">{HISTORY_PERIODS.map(([id]) =>
         <button key={id} className={period === id ? "selected" : ""} onClick={() => setPeriod(id)}>{t(id)}</button>,
@@ -691,11 +700,9 @@ function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,set
         <span>{history?.sourceCount ?? 0} {t("recordedSamples")}</span>
         <span title={t("wheelZoomHint")}>{t("zoom")}: {zoomFactor.toFixed(1)}×</span>
         {timeZoom&&<button onClick={()=>setTimeZoom(null)}>{t("resetZoom")}</button>}
-        <button onClick={exportExcel} disabled={loading||exportingExcel||!history?.points.length}><Download size={16}/>{t(exportingExcel?"exportingExcel":"exportExcel")}</button>
         <button onClick={() => setRefreshToken((value) => value + 1)} disabled={loading}><RefreshCw size={16}/>{t("refresh")}</button>
       </div>
     </section>
-    {exportError&&<div className="alarm-banner"><AlertTriangle/><div><strong>{t("exportFailed")}</strong><span>{t("exportFailedHint")}</span></div></div>}
     {loading && points.length === 0 && <div className="history-message"><RefreshCw className="spin"/><span>{t("loadingHistory")}</span></div>}
     {!loading && error && <div className="alarm-banner"><AlertTriangle/><div><strong>{t("historyError")}</strong><span>{normalizeGatewayUrl(gatewayUrl)}</span></div></div>}
     {!loading && !error && points.length === 0 && <div className="history-message"><ChartNoAxesCombined/><span>{t("noHistory")}</span></div>}
@@ -1489,7 +1496,16 @@ function EventsPage({events,chargeSessions,snapshot,t,acknowledgedAlarmKey,onAck
   </div>;
 }
 
-function GraphSettingsPage({t,settings,setSettings,snapshot,language,setLanguage,theme,setTheme}:{t:ReturnType<typeof translator>;settings:ChartDisplaySettings;setSettings:(settings:ChartDisplaySettings)=>void;snapshot:GatewaySnapshot|null;language:Language;setLanguage:(value:Language)=>void;theme:AppTheme;setTheme:(value:AppTheme)=>void}){
+function DataExportSettingsPanel({t,gatewayUrl}:{t:ReturnType<typeof translator>;gatewayUrl:string}){
+  const [busy,setBusy]=useState<"sql"|"excel"|null>(null);
+  const [error,setError]=useState(false);
+  const labels:HistoryExportLabels={dataSheet:t("exportDataSheet"),socSheet:t("exportSocSheet"),connectionSheet:t("exportConnectionSheet"),informationSheet:t("exportInformationSheet"),timestamp:t("exportTimestamp"),timestampMs:t("exportTimestampMs"),voltage:t("voltage"),current:t("current"),power:t("power"),soc:t("soc"),temperature:t("temp"),imbalance:t("imbalance"),balancing:t("balance"),alarmMask:t("exportAlarmMask"),cellVoltage:t("cellVoltage"),cellResistance:t("estimatedResistance"),previousSoc:t("exportPreviousSoc"),connectionEvent:t("exportConnectionEvent"),durationSeconds:t("exportDurationSeconds"),bmsName:t("exportBmsName"),gattStatus:t("gattCode"),exportCreated:t("exportCreated"),periodFrom:t("exportPeriodFrom"),periodTo:t("exportPeriodTo"),sourceRecords:t("recordedSamples"),exportedPoints:t("exportedPoints"),aggregationInterval:t("exportAggregationSeconds"),lost:t("connectionLost"),restored:t("connectionRestored")};
+  async function downloadSql(){setBusy("sql");setError(false);try{const result=await exportHistoryDatabaseSql();const url=URL.createObjectURL(new Blob([result.sql],{type:"application/sql;charset=utf-8"}));const a=document.createElement("a");a.href=url;a.download=`bms-history-${new Date().toISOString().slice(0,10)}.sql`;a.click();window.setTimeout(()=>URL.revokeObjectURL(url),1000);}catch{setError(true);}finally{setBusy(null);}}
+  async function downloadExcel(){setBusy("excel");setError(false);try{const to=Date.now();const history=await fetchGatewayHistory(gatewayUrl,to-365*24*60*60_000,to,5000);if(history.points.length===0)throw new Error("No history");await exportHistoryWorkbook(history,labels);}catch{setError(true);}finally{setBusy(null);}}
+  return <section className="panel data-export-panel"><div className="panel-heading"><span>{t("historyTitle")}</span><small>{t("savedLocally")}</small></div><p>{t("historySectionsHint")}</p><div className="data-export-actions"><button className="database-export-button" onClick={downloadSql} disabled={busy!==null} title={t("databaseExportHint")}><Download size={16}/>{busy==="sql"?t("databaseExporting"):t("databaseExport")}</button><button className="database-export-button" onClick={downloadExcel} disabled={busy!==null} title={t("exportExcel")}><Download size={16}/>{busy==="excel"?t("exportingExcel"):t("exportExcel")}</button></div>{error&&<div className="threshold-validation-error" role="alert">{t("exportFailed")}</div>}</section>;
+}
+
+function GraphSettingsPage({t,settings,setSettings,snapshot,language,setLanguage,theme,setTheme,gatewayUrl}:{t:ReturnType<typeof translator>;settings:ChartDisplaySettings;setSettings:(settings:ChartDisplaySettings)=>void;snapshot:GatewaySnapshot|null;language:Language;setLanguage:(value:Language)=>void;theme:AppTheme;setTheme:(value:AppTheme)=>void;gatewayUrl:string}){
   const [thresholdError,setThresholdError]=useState<string|null>(null);
   const metricRows:Array<[ThresholdMetric,string,string,number]>=[
     ["cellVoltageV",t("cellVoltage"),"V",.001],
@@ -1518,6 +1534,7 @@ function GraphSettingsPage({t,settings,setSettings,snapshot,language,setLanguage
   const protection=snapshot?.protectionSettings;
   const voltageSettingsReady=Boolean(protection&&Number.isFinite(protection.soc0VoltageV)&&Number.isFinite(protection.balanceStartVoltageV));
   return <div className="page-content graph-settings-page">
+    <DataExportSettingsPanel t={t} gatewayUrl={gatewayUrl}/>
     <section className="panel setting-panel language-setting-panel"><div className="setting-icon"><Languages/></div><div><h2>{t("language")}</h2><p>{t("languageInfo")}</p><div className="language-grid">{languages.map(([code,label])=><button className={language===code?"selected":""} key={code} onClick={()=>setLanguage(code)}>{language===code&&"✓ "}{label}</button>)}</div></div></section>
     <section className="panel setting-panel theme-setting-panel"><div className="setting-icon">{theme==="dark"?<Moon/>:<Sun/>}</div><div><h2>{t("appearance")}</h2><p>{t("appearanceHint")}</p><div className="theme-toggle-row"><SettingsToggle label={t("darkTheme")} detail={theme==="dark"?t("darkThemeActive"):t("lightThemeActive")} checked={theme==="dark"} onChange={(enabled)=>setTheme(enabled?"dark":"light")}/></div></div></section>
     <section className="panel graph-feature-panel graph-options-panel"><div className="panel-heading"><span>{t("graphFunctions")}</span><small>{t("savedLocally")}</small></div><div className="graph-feature-list">
@@ -1547,6 +1564,8 @@ function GraphSettingsPage({t,settings,setSettings,snapshot,language,setLanguage
     <section className="panel graph-feature-panel history-visibility-panel"><div className="panel-heading"><span>{t("historySections")}</span><small>{t("savedLocally")}</small></div><p className="history-sections-hint">{t("historySectionsHint")}</p><div className="graph-feature-list">
       {([['packVoltageV',t('voltage')],['currentA',t('current')],['chargeCurrentA',t('chargeCurrent')],['dischargeCurrentA',t('dischargeCurrent')],['powerW',t('power')],['socPercent',t('soc')],['temperatureC',t('temp')],['deltaMv',t('imbalance')]] as Array<[IndividualChartMetric,string]>).map(([metric,label])=><SettingsToggle key={metric} label={label} detail={`${t("individualChart")} · ${t("individualChartToggleHint")}`} checked={settings.individualChartVisibility[metric]} onChange={(value)=>setIndividualChart(metric,value)}/>)}
       <SettingsToggle label={t("showLiveCells")} detail={t("showLiveCellsHint")} checked={settings.historySections.liveCells} onChange={(value)=>setHistorySection("liveCells",value)}/>
+      <SettingsToggle label={t("showWorkingCurrentDistribution")} detail={t("showWorkingCurrentDistributionHint")} checked={settings.historySections.dischargeCurrentDistribution} onChange={(value)=>setHistorySection("dischargeCurrentDistribution",value)}/>
+      <SettingsToggle label={t("operatingPointTitle")} detail={t("showOperatingPointComparisonHint")} checked={settings.historySections.operatingPointCellComparison} onChange={(value)=>setHistorySection("operatingPointCellComparison",value)}/>
       <SettingsToggle label={t("showCompositeChart")} detail={t("showCompositeChartHint")} checked={settings.historySections.compositeChart} onChange={(value)=>setHistorySection("compositeChart",value)}/>
       <SettingsToggle label={t("showCellVoltageChart")} detail={t("showCellVoltageChartHint")} checked={settings.historySections.cellVoltageChart} onChange={(value)=>setHistorySection("cellVoltageChart",value)}/>
       <SettingsToggle label={t("showCellEnergyEstimate")} detail={t("showCellEnergyEstimateHint")} checked={settings.historySections.cellEnergyEstimate} onChange={(value)=>setHistorySection("cellEnergyEstimate",value)}/>

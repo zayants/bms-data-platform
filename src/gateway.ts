@@ -1,4 +1,5 @@
 import type { CellStats, GatewaySnapshot, HistoryPoint, HistoryResponse } from "./types";
+import { fetchSynchronizedGatewayHistory } from "./historySync";
 
 export function normalizeGatewayUrl(input: string): string {
   const trimmed = input.trim().replace(/\/+$/, "");
@@ -71,9 +72,7 @@ export async function fetchGatewayHistory(
   to: number,
   maxPoints = 1200,
 ): Promise<HistoryResponse> {
-  const response = await fetch(buildHistoryUrl(baseUrl, from, to, maxPoints), { cache: "no-store" });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return await response.json() as HistoryResponse;
+  return fetchSynchronizedGatewayHistory(baseUrl, from, to, maxPoints);
 }
 
 export class GatewayClient {
