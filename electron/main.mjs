@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu } from "electron";
+import { app, BrowserWindow, dialog, Menu } from "electron";
 import http from "node:http";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -7,9 +7,20 @@ import path from "node:path";
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const webRoot = path.join(root, "dist");
 let webServer;
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) app.quit();
+app.on("second-instance", () => {
+  const window = BrowserWindow.getAllWindows()[0];
+  if (window) {
+    if (window.isMinimized()) window.restore();
+    window.focus();
+  }
+});
 
 function startWebServer() {
-  webServer = http.createServer((req, res) => {
+  return new Promise((resolve, reject) => {
+    webServer = http.createServer((req, res) => {
     const requestPath = decodeURIComponent((req.url || "/").split("?")[0]);
     const relative = requestPath === "/" ? "index.html" : requestPath.replace(/^\/+/, "");
     const candidate = path.resolve(webRoot, relative);
@@ -19,8 +30,13 @@ function startWebServer() {
     const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".woff2": "font/woff2" };
     res.writeHead(200, { "Content-Type": types[ext] || "application/octet-stream" });
     fs.createReadStream(file).pipe(res);
+    });
+    webServer.once("error", reject);
+    webServer.listen(4174, "0.0.0.0", () => {
+      webServer.off("error", reject);
+      resolve();
+    });
   });
-  webServer.listen(4174, "0.0.0.0");
 }
 
 function createWindow() {
@@ -45,9 +61,15 @@ function createWindow() {
   window.once("ready-to-show", () => window.show());
 }
 
-app.whenReady().then(() => {
-  startWebServer();
-  createWindow();
+app.whenReady().then(async () => {
+  if (!gotSingleInstanceLock) return;
+  try {
+    await startWebServer();
+    createWindow();
+  } catch (error) {
+    dialog.showErrorBox("BMS Data Platform", `Unable to start the local monitor on port 4174. Close the other program using this port and try again.\n\n${error instanceof Error ? error.message : String(error)}`);
+    app.quit();
+  }
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

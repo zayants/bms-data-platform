@@ -40,6 +40,7 @@ export type MonitorEvent = {
   severity: "info" | "warning" | "critical";
   title: string;
   details: string;
+  kind?: "restored" | "lost" | "alarmRaised" | "alarmCleared";
 };
 
 export type ConnectionState = "idle" | "connecting" | "live" | "stale" | "offline";

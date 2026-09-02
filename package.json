@@ -1,6 +1,6 @@
 {
   "name": "bms-data-platform-desktop-monitor",
-  "version": "0.7.31",
+  "version": "0.7.32",
   "description": "Read-only desktop monitor for the BMS Data Platform phone gateway",
   "author": "zayants",
   "private": true,

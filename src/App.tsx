@@ -35,7 +35,7 @@ type Page = "overview" | "history" | "functions" | "events" | "connection" | "se
 type AppTheme = "light" | "dark";
 type IconType = typeof Activity;
 type DiagnosticSettings = { showAdvanced: boolean; showGattCodes: boolean };
-declare global { interface Window { bmsDesktop?: { computerUrl?: string } } }
+declare global { interface Window { bmsDesktop?: { computerUrl?: string; computerUrls?: string[] } } }
 const DEFAULT_DIAGNOSTIC_SETTINGS: DiagnosticSettings = { showAdvanced: false, showGattCodes: false };
 function loadDiagnosticSettings(): DiagnosticSettings { try { const value=JSON.parse(localStorage.getItem("bms-diagnostic-settings-v1")??"null"); return {showAdvanced:value?.showAdvanced===true,showGattCodes:value?.showGattCodes===true}; } catch { return DEFAULT_DIAGNOSTIC_SETTINGS; } }
 
@@ -60,6 +60,21 @@ function thresholdValidationMessage(issue: ReturnType<typeof thresholdValidation
   if (issue === "order") return t("thresholdInvalidOrder");
   return t("thresholdInvalid");
 }
+function monitorEventKind(event: MonitorEvent): MonitorEvent["kind"] {
+  if (event.kind) return event.kind;
+  const title = event.title.trim().toLowerCase();
+  if (["connection restored", "связь восстановлена", "зв’язок відновлено"].includes(title)) return "restored";
+  if (["connection lost", "связь потеряна", "зв’язок втрачено"].includes(title)) return "lost";
+  if (["bms alarm detected", "обнаружена авария bms", "виявлено аварію bms"].includes(title)) return "alarmRaised";
+  if (["bms alarms cleared", "аварии bms сброшены", "аварії bms скинуто"].includes(title)) return "alarmCleared";
+  return undefined;
+}
+function monitorEventText(event: MonitorEvent, t: ReturnType<typeof translator>): { title: string; details: string } {
+  const kind = monitorEventKind(event);
+  const title = kind === "restored" ? t("restored") : kind === "lost" ? t("lost") : kind === "alarmRaised" ? t("alarmRaised") : kind === "alarmCleared" ? t("alarmCleared") : event.title;
+  const normalDetails = kind === "alarmCleared" && ["normal", "норма"].includes(event.details.trim().toLowerCase());
+  return { title, details: normalDetails ? t("normal") : event.details };
+}
 
 function App() {
   const [page, setPage] = useState<Page>("overview");
@@ -83,6 +98,7 @@ function App() {
   const [diagnosticSettings,setDiagnosticSettings]=useState<DiagnosticSettings>(loadDiagnosticSettings);
   const [historySync,setHistorySync]=useState<HistorySyncState>({status:"idle",deviceKey:"",deviceName:"",downloadedRecords:0,phoneRecordCount:0,cachedFrom:null,cachedTo:null});
   const previousOnline = useRef<boolean | null>(null);
+  const hasConnectedOnce = useRef(false);
   const previousAlarms = useRef<string | null>(null);
   const t = useMemo(() => translator(language), [language]);
   const currentAlarmKey = (snapshot?.alarms ?? []).join(",");
@@ -131,13 +147,12 @@ function App() {
   }, [gatewayUrl, chargeSessionsResetAt]);
 
   useEffect(() => {
-    if (previousOnline.current !== null && previousOnline.current !== transportOnline) {
-      addEvent({
-        severity: transportOnline ? "info" : "warning",
-        title: transportOnline ? t("restored") : t("lost"),
-        details: normalizeGatewayUrl(gatewayUrl),
-      });
+    if (transportOnline && previousOnline.current === false && hasConnectedOnce.current) {
+      addEvent({ severity: "info", kind: "restored", title: t("restored"), details: normalizeGatewayUrl(gatewayUrl) });
+    } else if (!transportOnline && previousOnline.current === true) {
+      addEvent({ severity: "warning", kind: "lost", title: t("lost"), details: normalizeGatewayUrl(gatewayUrl) });
     }
+    if (transportOnline) hasConnectedOnce.current = true;
     previousOnline.current = transportOnline;
   }, [transportOnline]);
 
@@ -146,6 +161,7 @@ function App() {
     if (previousAlarms.current !== null && currentAlarmKey !== previousAlarms.current) {
       addEvent({
         severity: currentAlarmKey ? "critical" : "info",
+        kind: currentAlarmKey ? "alarmRaised" : "alarmCleared",
         title: currentAlarmKey ? t("alarmRaised") : t("alarmCleared"),
         details: currentAlarmKey || t("normal"),
       });
@@ -295,7 +311,8 @@ function HistorySyncBanner({state,t}:{state:HistorySyncState;t:ReturnType<typeof
   const initial=state.status==="initial",incremental=state.status==="incremental";
   const percent=state.phoneRecordCount>0?Math.min(100,state.downloadedRecords/state.phoneRecordCount*100):0;
   const title=t(initial?"historyInitialSync":incremental?"historyIncrementalSync":state.status==="checking"?"historySyncChecking":state.status==="unsupported"?"historySyncUnsupported":"historySyncError");
-  return <section className={`history-sync-banner ${state.status}`}><RefreshCw className={initial||incremental||state.status==="checking"?"spin":""}/><div><strong>{title}</strong><span>{initial?`${state.downloadedRecords.toLocaleString()} / ${state.phoneRecordCount.toLocaleString()} · ${percent.toFixed(1)}%`:incremental?`${state.downloadedRecords.toLocaleString()} ${t("recordedSamples")}`:state.error??t("historySyncLegacy")}</span>{(initial||incremental)&&<i><b style={{width:`${percent}%`}}/></i>}</div></section>;
+  const detail=initial?`${state.downloadedRecords.toLocaleString()} / ${state.phoneRecordCount.toLocaleString()} · ${percent.toFixed(1)}%`:incremental?`${state.downloadedRecords.toLocaleString()} ${t("recordedSamples")}`:state.status==="checking"?t("historySyncCheckingHint"):state.error??t("historySyncLegacy");
+  return <section className={`history-sync-banner ${state.status}`}><RefreshCw className={initial||incremental||state.status==="checking"?"spin":""}/><div><strong>{title}</strong><span>{detail}</span>{(initial||incremental)&&<i><b style={{width:`${percent}%`}}/></i>}</div></section>;
 }
 
 function StaleDataBanner({t}:{t:ReturnType<typeof translator>}) {
@@ -1487,7 +1504,7 @@ function EventsPage({events,chargeSessions,snapshot,t,acknowledgedAlarmKey,onAck
     {alarms.length > 0 && <section className={`alarm-banner active-alarm-banner ${acknowledged?"acknowledged":""}`}><AlertTriangle/><div><strong>{t("alarmRaised")}</strong><span>{alarms.join(" · ")}</span>{acknowledged&&<em>{t("alarmAcknowledged")}</em>}</div><button type="button" disabled={acknowledged} onClick={()=>onAcknowledge(alarmKey)}><CheckCircle2/>{t(acknowledged?"alarmAcknowledged":"acknowledgeAlarm")}</button></section>}
     <section className="panel event-panel"><div className="panel-heading"><span>{t("eventsTitle")}</span><div className="event-heading-actions"><small>{events.length}</small><button type="button" disabled={events.length===0} onClick={onClearEvents}>{t("clearLocalLog")}</button></div></div>
       <small className="event-storage-hint">{t("localClearHint")}</small>
-      {events.length===0?<div className="empty-state"><CheckCircle2/><span>{t("noEvents")}</span></div>:<div className="event-list">{events.map(event=><div className={`event ${event.severity}`} key={event.id}><div className="event-icon">{event.severity==="critical"?<AlertTriangle/>:event.severity==="warning"?<Unplug/>:<CheckCircle2/>}</div><div><strong>{event.title}</strong><span>{event.details}</span></div><time>{new Date(event.timestamp).toLocaleTimeString()}</time></div>)}</div>}
+      {events.length===0?<div className="empty-state"><CheckCircle2/><span>{t("noEvents")}</span></div>:<div className="event-list">{events.map(event=>{const text=monitorEventText(event,t);return <div className={`event ${event.severity}`} key={event.id}><div className="event-icon">{event.severity==="critical"?<AlertTriangle/>:event.severity==="warning"?<Unplug/>:<CheckCircle2/>}</div><div><strong>{text.title}</strong><span>{text.details}</span></div><time>{new Date(event.timestamp).toLocaleString()}</time></div>})}</div>}
     </section>
     <section className="panel event-panel"><div className="panel-heading"><span>{t("chargeSession")}</span><div className="event-heading-actions"><small>{chargeSessions.length}</small><button type="button" disabled={chargeSessions.length===0} onClick={onClearChargeSessions}>{t("hideLocalHistory")}</button></div></div>
       <small className="event-storage-hint">{t("chargeHistoryHideHint")}</small>
@@ -1592,8 +1609,10 @@ function BmsThresholdCard({label,detail,value,critical}:{id:BmsThresholdId;label
 function ConnectionPage({ t,gatewayUrl,draftUrl,setDraftUrl,connect,language,state,snapshot,showGattCodes }: { t:ReturnType<typeof translator>;gatewayUrl:string;draftUrl:string;setDraftUrl:(v:string)=>void;connect:()=>void;language:Language;state:ConnectionState;snapshot:GatewaySnapshot|null;showGattCodes:boolean }) {
   const [connectionEvents,setConnectionEvents]=useState<ConnectionHistoryEvent[]>([]);
   const [computerQr,setComputerQr]=useState<string>("");
-  const computerUrl=typeof window!=="undefined"?(window.bmsDesktop?.computerUrl || (window.location.protocol.startsWith("http") ? `${window.location.protocol}//${window.location.host}` : "")):"";
-  const loopback=typeof window!=="undefined" && ["localhost","127.0.0.1","::1"].includes(window.location.hostname);
+  const browserUrl=typeof window!=="undefined"&&window.location.protocol.startsWith("http")?`${window.location.protocol}//${window.location.host}`:"";
+  const computerUrls=typeof window!=="undefined"?(window.bmsDesktop?.computerUrls?.length?window.bmsDesktop.computerUrls:[window.bmsDesktop?.computerUrl||browserUrl].filter(Boolean)):[];
+  const computerUrl=computerUrls[0]??"";
+  const loopback=(()=>{try{return ["localhost","127.0.0.1","::1"].includes(new URL(computerUrl).hostname);}catch{return false;}})();
   useEffect(()=>{let active=true;if(!computerUrl){setComputerQr("");return()=>{active=false;};}QRCode.toDataURL(computerUrl,{width:180,margin:1,errorCorrectionLevel:"M"}).then(value=>{if(active)setComputerQr(value);}).catch(()=>{if(active)setComputerQr("");});return()=>{active=false;};},[computerUrl]);
   useEffect(()=>{
     let active=true;
@@ -1605,7 +1624,7 @@ function ConnectionPage({ t,gatewayUrl,draftUrl,setDraftUrl,connect,language,sta
   },[gatewayUrl,snapshot?.connected]);
   return <div className="page-content settings-grid">
     <section className="panel setting-panel"><div className="setting-icon"><Smartphone/></div><div><h2>{t("connectionTitle")}</h2><p>{t("connectionInfo")}</p><label>{t("gatewayAddress")}</label><div className="input-row"><input value={draftUrl} onChange={e=>setDraftUrl(e.target.value)} onKeyDown={e=>e.key==="Enter"&&connect()} placeholder={t("addressHint")}/><button onClick={connect}><Cable size={18}/>{t("connect")}</button></div><div className={`api-state ${state}`}><Radio size={18}/><span>{t("apiStatus")}</span><strong>{snapshot?.apiVersion ? `${t("detected")} · v${snapshot.apiVersion}` : t("notDetected")}</strong></div></div></section>
-    <section className="panel setting-panel computer-access-panel"><div className="setting-icon"><ScanSearch/></div><div><h2>{t("computerAccessTitle")}</h2><p>{t("computerAccessHint")}</p><label>{t("computerAccessAddress")}</label><div className="computer-access-content"><div className={`computer-url ${loopback?"loopback":""}`}>{computerUrl||"—"}</div>{computerQr&&<div className="computer-qr"><img src={computerQr} alt={t("computerAccessTitle")} /><code>{computerUrl||"—"}</code></div>}</div>{loopback&&<small className="event-storage-hint">{t("computerAccessLoopback")}</small>}</div></section>
+    <section className="panel setting-panel computer-access-panel"><div className="setting-icon"><ScanSearch/></div><div><h2>{t("computerAccessTitle")}</h2><p>{t("computerAccessHint")}</p><label>{t("computerAccessAddress")}</label><div className="computer-access-content"><div>{computerUrls.map((url,index)=><div key={url} className={`${index===0?"computer-url":"computer-url alternative"} ${loopback?"loopback":""}`}>{url}</div>)}</div>{computerQr&&<div className="computer-qr"><img src={computerQr} alt={t("computerAccessTitle")} /><code>{computerUrl||"—"}</code></div>}</div>{loopback&&<small className="event-storage-hint">{t("computerAccessLoopback")}</small>}</div></section>
     <section className="panel about-panel"><ShieldCheck/><div><strong>BMS DATA PLATFORM {APP_VERSION}</strong><span>{t("readOnly")}</span></div></section>
     <ConnectionEventHistory events={connectionEvents} language={language} t={t} showGattCodes={showGattCodes}/>
   </div>;

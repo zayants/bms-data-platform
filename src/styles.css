@@ -162,7 +162,7 @@ body:has(.app-shell.theme-dark){background:#101316}
 /* Cell energy fill uses a red → yellow → green status colour scale. */
 .cell-energy-item{border-color:var(--energy-color,var(--line));background:linear-gradient(135deg,color-mix(in srgb,var(--energy-color,var(--panel)) 12%,var(--panel)),var(--panel))}
 .balance-mini-chart{--balance-negative:#4a4642}
-.computer-access-content{display:flex;align-items:center;gap:18px;flex-wrap:wrap}.computer-url{padding:12px 14px;border:1px solid var(--line);border-radius:7px;background:var(--soft);font:700 15px Inter;word-break:break-all}.computer-url.loopback{border-color:var(--amber);color:var(--amber)}.computer-access-content img{width:150px;height:150px;background:#fff;border-radius:8px;padding:6px}.computer-access-panel{grid-column:1/-1}
+.computer-access-content{display:flex;align-items:center;gap:18px;flex-wrap:wrap}.computer-url{padding:12px 14px;border:1px solid var(--line);border-radius:7px;background:var(--soft);font:700 15px Inter;word-break:break-all}.computer-url.alternative{margin-top:7px;font-size:13px;opacity:.82}.computer-url.loopback{border-color:var(--amber);color:var(--amber)}.computer-access-content img{width:150px;height:150px;background:#fff;border-radius:8px;padding:6px}.computer-access-panel{grid-column:1/-1}
 .theme-dark .balance-mini-chart{--balance-negative:#b8c0c5}
 /* MIN/MAX identify position in the pack; they do not indicate an alarm. */
 .cell-detail.min{border:2px solid #82909a;background:var(--soft)}
