@@ -3,7 +3,7 @@ export const languages = [
 ] as const;
 
 export type Language = typeof languages[number][0];
-export const APP_VERSION = "0.7.33";
+export const APP_VERSION = "0.7.34";
 
 const en = {
   passwordReminder: "CHANGE BMS PASSWORD", passwordReminderHint: "The BMS requests that its authorization password be changed.", historySyncCheckingHint:"Comparing the phone history with the local cache…",

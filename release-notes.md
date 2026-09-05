@@ -1,5 +1,16 @@
 # BMS Data Platform — release notes
 
+## 0.7.34 / Android Gateway 0.4.8
+
+- History period switching now immediately clears the previous time range, so old data is never shown under a newly selected label.
+- Added a clear loading state while the requested 1 hour, 24 hour, 7 day, 30 day or 1 year range is prepared.
+- Reduced unnecessary chart vertices for shorter periods to improve response and rendering speed without losing useful detail.
+- Includes the unchanged Android Gateway 0.4.8 for a complete installation package.
+
+Full bilingual notes: [release-notes-0.7.34.md](release-notes-0.7.34.md).
+
+---
+
 ## 0.7.33 / Android Gateway 0.4.8
 
 - Added a physically armed, controlled two-edge Charge MOS pulse test for comparative cell-resistance diagnostics.
