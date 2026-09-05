@@ -734,6 +734,7 @@ function historyPointLimit(period: HistoryPeriod): number {
   return 1_800;
 }
 
+const HistoryRangeStatus = React.createContext("");
 function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,setChartSettings}:{gatewayUrl:string;t:ReturnType<typeof translator>;language:Language;snapshot:GatewaySnapshot|null;cellStats:ReturnType<typeof calculateCellStats>;chartSettings:ChartDisplaySettings;setChartSettings:(settings:ChartDisplaySettings)=>void}) {
   const [period, setPeriod] = useState<HistoryPeriod>(() => {
     const saved = localStorage.getItem("bms-history-period") as HistoryPeriod | null;
@@ -743,6 +744,8 @@ function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,set
   const [seriesColors, setSeriesColors] = useState<Record<HistoryMetric, string>>(loadHistoryColors);
   const [signedColors, setSignedColors] = useState<Record<SignedHistoryMetric, DirectionalColors>>(loadSignedColors);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
+  const [rangeEmpty, setRangeEmpty] = useState(false);
+  const [rangePending, setRangePending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -763,9 +766,13 @@ function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,set
     setLoading(true);
     setError(false);
     fetchGatewayHistory(gatewayUrl, to - duration, to, historyPointLimit(period))
-      .then((result) => { if (active) setHistory(result); })
-      .catch(() => { if (active) { setHistory(null); setError(true); } })
-      .finally(() => { if (active) setLoading(false); });
+      .then((result) => { if (active) {
+        setRangeEmpty(result.points.length === 0);
+        // Removing a fullscreen panel also exits browser fullscreen.
+        if (result.points.length > 0) setHistory(result);
+      } })
+      .catch(() => { if (active) setError(true); })
+      .finally(() => { if (active) { setLoading(false); setRangePending(false); } });
     return () => { active = false; };
   }, [gatewayUrl, period, refreshToken, autoRefreshBucket]);
 
@@ -814,9 +821,11 @@ function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,set
   const setSignedColor = (id: SignedHistoryMetric, direction: keyof DirectionalColors, color: string) => setSignedColors((current) => ({...current,[id]:{...current[id],[direction]:color}}));
   const selectPeriod = (nextPeriod: HistoryPeriod) => {
     if (nextPeriod === period) return;
-    // Avoid showing old data under the newly selected time-range label.
+    // Keep the fullscreen node mounted and mask its plot during loading.
     setTimeZoom(null);
-    setHistory(null);
+    setRangePending(true);
+    setLoading(true);
+    setError(false);
     setPeriod(nextPeriod);
   };
   const handleHistoryWheel = (event:ReactWheelEvent<HTMLDivElement>) => {
@@ -893,7 +902,7 @@ function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,set
     {loading && points.length === 0 && <div className="history-message"><RefreshCw className="spin"/><span>{t("loadingHistory")}</span></div>}
     {!loading && error && <div className="alarm-banner"><AlertTriangle/><div><strong>{t("historyError")}</strong><span>{normalizeGatewayUrl(gatewayUrl)}</span></div></div>}
     {!loading && !error && points.length === 0 && <div className="history-message"><ChartNoAxesCombined/><span>{t("noHistory")}</span></div>}
-    {points.length > 0 && <>
+    {points.length > 0 && <HistoryRangeStatus.Provider value={rangePending?t("loadingHistory"):error?t("historyError"):rangeEmpty?t("noHistory"):""}>
       {chartSettings.historySections.compositeChart&&<><section className="panel chart-composer">
         <div className="composer-heading"><div><strong>{t("visibleCurves")}</strong><span>{t("dragHint")}</span></div>
         </div>
@@ -906,7 +915,7 @@ function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,set
       {chartSettings.historySections.cellResistanceChart&&<CellResistanceHistoryChart points={points} connectionEvents={history?.connectionEvents ?? []} period={period} setPeriod={selectPeriod} language={language} t={t} viewport={viewport} thresholds={thresholds} chartSettings={chartSettings} setChartSettings={setChartSettings} onHide={()=>hideHistorySection("cellResistanceChart")}/>}
       {visibleIndividualSeries.length>0&&<IndividualHistoryCharts points={points} connectionEvents={history?.connectionEvents ?? []} socEvents={socBoundaryEvents} series={visibleIndividualSeries} period={period} setPeriod={selectPeriod} language={language} t={t} viewport={viewport} thresholds={thresholds} protectionSettings={snapshot?.protectionSettings} packVoltageRange={packVoltageRange} chartSettings={chartSettings} setChartSettings={setChartSettings} setSeriesColor={setSeriesColor} setSignedColor={setSignedColor}/>}
       {chartSettings.historySections.correlationChart&&<CorrelationChart points={points} title={t("currentPowerCorrelation")} noDataLabel={t("noCorrelationData")} t={t} onHide={()=>hideHistorySection("correlationChart")}/>}
-    </>}
+    </HistoryRangeStatus.Provider>}
     {chartSettings.historySections.balanceDiagnostics&&<BalanceDiagnosticsPanel gatewayUrl={gatewayUrl} language={language} t={t} onHide={()=>hideHistorySection("balanceDiagnostics")}/>}
   </div>;
 }
@@ -1472,7 +1481,8 @@ function IndividualHistoryCharts({points,connectionEvents,socEvents,series,perio
 }
 
 function FullscreenPeriodPicker({period,setPeriod,t}:{period:HistoryPeriod;setPeriod:(period:HistoryPeriod)=>void;t:ReturnType<typeof translator>}){
-  return <div className="fullscreen-period-picker"><span>{t("period")}</span>{HISTORY_PERIODS.map(([id])=><button type="button" key={id} className={period===id?"selected":""} onClick={()=>setPeriod(id)}>{t(id)}</button>)}</div>;
+  const status=React.useContext(HistoryRangeStatus);
+  return <><div className="fullscreen-period-picker"><span>{t("period")}</span>{HISTORY_PERIODS.map(([id])=><button type="button" key={id} className={period===id?"selected":""} onClick={()=>setPeriod(id)}>{t(id)}</button>)}</div>{status&&<div className="chart-range-status" role="status">{status}</div>}</>;
 }
 
 function FullscreenTimeNavigator({viewport,language,t}:{viewport:TimeViewport;language:Language;t:ReturnType<typeof translator>}){

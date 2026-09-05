@@ -2,6 +2,8 @@
 
 ## English
 
+Updated build (September 5): fixed exiting fullscreen when switching the history period. The expanded chart now stays open while loading, including when the selected range is empty or loading fails. Download the Windows archive again if you installed the earlier 0.7.34 build. Android Gateway 0.4.8 is unchanged.
+
 This maintenance release improves time-range switching on the History page.
 
 - Selecting **1 hour**, **24 hours**, **7 days**, **30 days** or **1 year** now immediately removes the previous range from the screen.
@@ -13,6 +15,8 @@ This maintenance release improves time-range switching on the History page.
 The application remains local-first. The phone stores BMS history and the Windows monitor synchronizes only the missing records.
 
 ## Русский
+
+Исправленная сборка (5 сентября): устранён выход из полноэкранного графика при переключении периода. График остаётся развёрнутым во время загрузки, при отсутствии записей и ошибке загрузки. Если вы установили прежнюю сборку 0.7.34, скачайте Windows-архив повторно. Android Gateway 0.4.8 не изменён.
 
 Это техническое обновление улучшает переключение временного диапазона на странице «История».
 
