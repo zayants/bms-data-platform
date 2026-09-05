@@ -1,5 +1,6 @@
 import { loadCacheMeta, mergeCoverage, missingCoverage, readCachedHistory, saveCacheMeta, storeHistoryPoints, storeHistorySideData, type HistoryCacheMeta } from "./historyCache";
 import type { HistoryResponse, HistorySyncMetaResponse, HistorySyncPageResponse } from "./types";
+import { addClientCompatibility } from "./apiCompatibility";
 
 export type HistorySyncState = {
   status: "idle" | "checking" | "initial" | "incremental" | "complete" | "error" | "unsupported";
@@ -41,7 +42,7 @@ const publish = (patch: Partial<HistorySyncState>) => {
 const normalize = (input: string) => input.trim().replace(/\/+$/, "");
 const remoteHistoryUrl = (baseUrl: string, from: number, to: number, maxPoints: number) => {
   const query = new URLSearchParams({ from: String(Math.round(from)), to: String(Math.round(to)), maxPoints: String(Math.max(50, Math.min(5_000, Math.round(maxPoints)))) });
-  return `${normalize(baseUrl)}/api/v1/history?${query}`;
+  return addClientCompatibility(`${normalize(baseUrl)}/api/v1/history?${query}`);
 };
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -61,7 +62,7 @@ async function syncInterval(baseUrl: string, deviceKey: string, from: number, to
   let cursor = from - 1;
   while (cursor < to) {
     const query = new URLSearchParams({ from: String(from), to: String(to), cursor: String(cursor), limit: "5000" });
-    const page = await fetchJson<HistorySyncPageResponse>(`${normalize(baseUrl)}/api/v1/history/sync?${query}`);
+    const page = await fetchJson<HistorySyncPageResponse>(addClientCompatibility(`${normalize(baseUrl)}/api/v1/history/sync?${query}`));
     await storeHistoryPoints(deviceKey, page.points);
     onPage(page.points.length);
     if (!page.hasMore) break;
@@ -78,7 +79,7 @@ async function performSync(baseUrl: string): Promise<{ deviceKey: string; suppor
   publish({ status: "checking", downloadedRecords: 0, error: undefined });
   let phone: HistorySyncMetaResponse;
   try {
-    phone = await fetchJson<HistorySyncMetaResponse>(`${normalize(baseUrl)}/api/v1/history/sync-meta`);
+    phone = await fetchJson<HistorySyncMetaResponse>(addClientCompatibility(`${normalize(baseUrl)}/api/v1/history/sync-meta`));
   } catch (error) {
     if ((error as { status?: number }).status === 404) {
       publish({ status: "unsupported" });

@@ -31,7 +31,7 @@ describe("normalizeGatewayUrl", () => {
 describe("buildHistoryUrl", () => {
   it("creates a bounded read-only history request", () => {
     expect(buildHistoryUrl("192.168.0.188:8765/", 1000, 2000, 9000)).toBe(
-      "http://192.168.0.188:8765/api/v1/history?from=1000&to=2000&maxPoints=5000",
+      "http://192.168.0.188:8765/api/v1/history?from=1000&to=2000&maxPoints=5000&clientApi=2",
     );
   });
 });

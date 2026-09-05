@@ -7,10 +7,14 @@ import {
 } from "lucide-react";
 import {
   calculateCellStats,
+  cancelPulseResistanceTest,
   currentPowerCorrelation,
   fetchGatewayHistory,
+  fetchPulseResistanceHistory,
+  fetchPulseResistanceStatus,
   GatewayClient,
   normalizeGatewayUrl,
+  startPulseResistanceTest,
 } from "./gateway";
 import { APP_VERSION, languages, systemLanguage, translator, type Language } from "./i18n";
 import { calculateSocEventCellStats, inferSocBoundaryEvents } from "./historyDiagnostics";
@@ -24,11 +28,13 @@ import { DischargeCurrentDistributionPanel } from "./DischargeCurrentDistributio
 import { OperatingPointCellComparisonPanel } from "./OperatingPointCellComparisonPanel";
 import { subscribeHistorySync, type HistorySyncState } from "./historySync";
 import { exportHistoryDatabaseSql } from "./historyCache";
+import { GATEWAY_COMPATIBILITY_ID, type GatewayCompatibilityIssue } from "./apiCompatibility";
+import { comparePulseResistanceTests, pulseTestsComparable } from "./pulseResistanceDiagnostics";
 
 const makeId = () => typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
   ? crypto.randomUUID()
   : `id-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-import type { ChargeSessionRecord, ConnectionHistoryEvent, ConnectionState, GatewaySnapshot, HistoryPoint, HistoryResponse, MonitorEvent, SocBoundaryEvent } from "./types";
+import type { ChargeSessionRecord, ConnectionHistoryEvent, ConnectionState, GatewaySnapshot, HistoryPoint, HistoryResponse, MonitorEvent, PulseResistanceTestResult, PulseResistanceTestStatus, SocBoundaryEvent } from "./types";
 import { loadChartSettings, saveChartSettings, THRESHOLD_BOUNDS, thresholdValidationIssue, validThresholdLimits, type BmsThresholdId, type ChartDisplaySettings, type HistorySectionVisibility, type IndividualChartMetric, type ThresholdMetric } from "./chartSettings";
 
 type Page = "overview" | "history" | "functions" | "events" | "connection" | "settings";
@@ -41,6 +47,7 @@ function loadDiagnosticSettings(): DiagnosticSettings { try { const value=JSON.p
 
 const DEFAULT_GATEWAY = "http://192.168.0.188:8765";
 const MONITOR_EVENTS_STORAGE_KEY = "bms-monitor-events-v1";
+const HISTORY_SYNC_BANNER_DELAY_MS = 5_000;
 function loadMonitorEvents(): MonitorEvent[] {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(MONITOR_EVENTS_STORAGE_KEY) ?? "[]");
@@ -89,6 +96,7 @@ function App() {
   const [snapshot, setSnapshot] = useState<GatewaySnapshot | null>(null);
   const [transportOnline, setTransportOnline] = useState(false);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
+  const [compatibilityIssue, setCompatibilityIssue] = useState<GatewayCompatibilityIssue | null>(null);
   const [events, setEvents] = useState<MonitorEvent[]>(loadMonitorEvents);
   const [chargeSessions, setChargeSessions] = useState<ChargeSessionRecord[]>([]);
   const [chargeSessionsResetAt, setChargeSessionsResetAt] = useState<number>(() => Number(localStorage.getItem("bms-charge-sessions-reset-at") ?? 0));
@@ -97,6 +105,8 @@ function App() {
   const [chartSettings,setChartSettings]=useState<ChartDisplaySettings>(loadChartSettings);
   const [diagnosticSettings,setDiagnosticSettings]=useState<DiagnosticSettings>(loadDiagnosticSettings);
   const [historySync,setHistorySync]=useState<HistorySyncState>({status:"idle",deviceKey:"",deviceName:"",downloadedRecords:0,phoneRecordCount:0,cachedFrom:null,cachedTo:null});
+  const [showHistorySyncBanner,setShowHistorySyncBanner]=useState(false);
+  const historySyncStartedAt=useRef<number | null>(null);
   const previousOnline = useRef<boolean | null>(null);
   const hasConnectedOnce = useRef(false);
   const previousAlarms = useRef<string | null>(null);
@@ -112,10 +122,31 @@ function App() {
   useEffect(()=>localStorage.setItem("bms-app-theme",theme),[theme]);
   useEffect(()=>localStorage.setItem(MONITOR_EVENTS_STORAGE_KEY,JSON.stringify(events)),[events]);
   useEffect(()=>subscribeHistorySync(setHistorySync),[]);
+  useEffect(()=>{
+    const isActive=historySync.status==="checking"||historySync.status==="initial"||historySync.status==="incremental";
+    const requiresImmediateAttention=historySync.status==="error"||historySync.status==="unsupported";
+    if(requiresImmediateAttention){
+      historySyncStartedAt.current=null;
+      setShowHistorySyncBanner(true);
+      return;
+    }
+    if(!isActive){
+      historySyncStartedAt.current=null;
+      setShowHistorySyncBanner(false);
+      return;
+    }
+    const startedAt=historySyncStartedAt.current??Date.now();
+    historySyncStartedAt.current=startedAt;
+    const remaining=Math.max(0,HISTORY_SYNC_BANNER_DELAY_MS-(Date.now()-startedAt));
+    const timer=window.setTimeout(()=>setShowHistorySyncBanner(true),remaining);
+    return ()=>window.clearTimeout(timer);
+  },[historySync.status]);
 
   useEffect(() => {
     const url = normalizeGatewayUrl(gatewayUrl);
     if (!url) { setConnectionState("idle"); return; }
+    setSnapshot(null);
+    setCompatibilityIssue(null);
     setConnectionState("connecting");
     const client = new GatewayClient(
       url,
@@ -127,12 +158,14 @@ function App() {
         setTransportOnline(online);
         if (!online) setConnectionState("offline");
       },
+      setCompatibilityIssue,
     );
     client.start();
     return () => client.stop();
   }, [gatewayUrl]);
 
   useEffect(() => {
+    if (compatibilityIssue) return;
     let cancelled = false;
     const load = async () => {
       const now = Date.now();
@@ -144,7 +177,7 @@ function App() {
     void load();
     const timer = window.setInterval(load, 60_000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [gatewayUrl, chargeSessionsResetAt]);
+  }, [gatewayUrl, chargeSessionsResetAt, compatibilityIssue]);
 
   useEffect(() => {
     if (transportOnline && previousOnline.current === false && hasConnectedOnce.current) {
@@ -207,15 +240,37 @@ function App() {
         <div className={`live-pill ${connectionState}`}><span className="pulse"/>{stateLabel}<small>{snapshot?.ageMs != null ? `${Math.round(snapshot.ageMs / 100) / 10}s` : "—"}</small></div>
       </header>
       {connectionState !== "live" && (snapshot || historySync.deviceKey) && <StaleDataBanner t={t}/>} 
-      {historySync.status!=="idle"&&historySync.status!=="complete"&&<HistorySyncBanner state={historySync} t={t}/>} 
+      {!compatibilityIssue&&showHistorySyncBanner&&historySync.status!=="idle"&&historySync.status!=="complete"&&<HistorySyncBanner state={historySync} t={t}/>}
 
-      {page === "overview" && <Overview snapshot={snapshot} t={t} cellStats={cellStats}/>}
-      {page === "history" && <HistoryPage gatewayUrl={gatewayUrl} t={t} language={language} snapshot={snapshot} cellStats={cellStats} chartSettings={chartSettings} setChartSettings={setChartSettings}/>}
-      {page === "functions" && <FunctionsPage t={t} diagnosticSettings={diagnosticSettings} setDiagnosticSettings={setDiagnosticSettings}/>} 
-      {page === "events" && <EventsPage events={events} chargeSessions={chargeSessions} snapshot={snapshot} t={t} acknowledgedAlarmKey={acknowledgedAlarmKey} onAcknowledge={(key)=>setAcknowledgedAlarmKey(key)} onClearEvents={()=>setEvents([])} onClearChargeSessions={()=>{const now=Date.now();localStorage.setItem("bms-charge-sessions-reset-at",String(now));setChargeSessionsResetAt(now);}}/>}
-      {page === "connection" && <ConnectionPage t={t} gatewayUrl={gatewayUrl} draftUrl={draftUrl} setDraftUrl={setDraftUrl} connect={connect} language={language} state={connectionState} snapshot={snapshot} showGattCodes={diagnosticSettings.showGattCodes}/>}
-      {page === "settings" && <GraphSettingsPage t={t} settings={chartSettings} setSettings={setChartSettings} snapshot={snapshot} language={language} setLanguage={setLanguage} theme={theme} setTheme={setTheme} gatewayUrl={gatewayUrl}/>}
+      {compatibilityIssue && page === "connection" && <CompatibilityBlock issue={compatibilityIssue} t={t}/>}
+      {compatibilityIssue && page !== "connection" ? <CompatibilityBlock issue={compatibilityIssue} t={t} onOpenConnection={()=>setPage("connection")}/> : <>
+        {page === "overview" && <Overview snapshot={snapshot} t={t} cellStats={cellStats}/>}
+        {page === "history" && <HistoryPage gatewayUrl={gatewayUrl} t={t} language={language} snapshot={snapshot} cellStats={cellStats} chartSettings={chartSettings} setChartSettings={setChartSettings}/>}
+        {page === "functions" && <FunctionsPage t={t} diagnosticSettings={diagnosticSettings} setDiagnosticSettings={setDiagnosticSettings} gatewayUrl={gatewayUrl} snapshot={snapshot}/>}
+        {page === "events" && <EventsPage events={events} chargeSessions={chargeSessions} snapshot={snapshot} t={t} acknowledgedAlarmKey={acknowledgedAlarmKey} onAcknowledge={(key)=>setAcknowledgedAlarmKey(key)} onClearEvents={()=>setEvents([])} onClearChargeSessions={()=>{const now=Date.now();localStorage.setItem("bms-charge-sessions-reset-at",String(now));setChargeSessionsResetAt(now);}}/>}
+        {page === "connection" && <ConnectionPage t={t} gatewayUrl={gatewayUrl} draftUrl={draftUrl} setDraftUrl={setDraftUrl} connect={connect} language={language} state={connectionState} snapshot={snapshot} showGattCodes={diagnosticSettings.showGattCodes}/>}
+        {page === "settings" && <GraphSettingsPage t={t} settings={chartSettings} setSettings={setChartSettings} snapshot={snapshot} language={language} setLanguage={setLanguage} theme={theme} setTheme={setTheme} gatewayUrl={gatewayUrl}/>}
+      </>}
     </main>
+  </div>;
+}
+
+function CompatibilityBlock({ issue, t, onOpenConnection }: { issue: GatewayCompatibilityIssue; t: ReturnType<typeof translator>; onOpenConnection?: () => void }) {
+  return <div className="page-content compatibility-page">
+    <section className="panel compatibility-blocker" role="alert" aria-live="assertive">
+      <AlertTriangle size={54}/>
+      <div>
+        <div className="eyebrow">{t("compatibilityEyebrow")}</div>
+        <h2>{t("compatibilityTitle")}</h2>
+        <p>{t("compatibilityMessage")}</p>
+        <dl>
+          <div><dt>{t("desktopVersion")}</dt><dd>{APP_VERSION}</dd></div>
+          <div><dt>{t("phoneVersion")}</dt><dd>{issue.gatewayVersion ?? "—"}</dd></div>
+          <div><dt>{t("compatibilityProtocol")}</dt><dd>{issue.received ?? "—"} / {GATEWAY_COMPATIBILITY_ID}</dd></div>
+        </dl>
+        {onOpenConnection && <button onClick={onOpenConnection}><Cable size={18}/>{t("openConnection")}</button>}
+      </div>
+    </section>
   </div>;
 }
 
@@ -451,7 +506,7 @@ function chartThresholds(settings:ChartDisplaySettings,snapshot:GatewaySnapshot|
   return result;
 }
 
-function FunctionsPage({t,diagnosticSettings,setDiagnosticSettings}:{t:ReturnType<typeof translator>;diagnosticSettings:DiagnosticSettings;setDiagnosticSettings:(value:DiagnosticSettings)=>void}) {
+function FunctionsPage({t,diagnosticSettings,setDiagnosticSettings,gatewayUrl,snapshot}:{t:ReturnType<typeof translator>;diagnosticSettings:DiagnosticSettings;setDiagnosticSettings:(value:DiagnosticSettings)=>void;gatewayUrl:string;snapshot:GatewaySnapshot|null}) {
   const entries:Array<{icon:IconType;title:string;description:string;available:boolean}>=[
     {icon:Gauge,title:t("socBoundaryFunction"),description:t("socBoundaryFunctionHint"),available:true},
     {icon:Activity,title:t("resistanceFunction"),description:t("resistanceFunctionHint"),available:true},
@@ -467,11 +522,109 @@ function FunctionsPage({t,diagnosticSettings,setDiagnosticSettings}:{t:ReturnTyp
   ];
   return <div className="page-content functions-page">
     <section className="panel functions-intro"><div className="functions-intro-icon"><BrainCircuit/></div><div><span>{t("diagnosticCenter")}</span><h2>{t("functionsTitle")}</h2><p>{t("functionsIntro")}</p></div></section>
+    <PulseResistancePanel t={t} gatewayUrl={gatewayUrl} snapshot={snapshot}/>
     <section className="panel function-controls"><SettingsToggle label={t("advancedDiagnostics")} detail={t("advancedDiagnosticsHint")} checked={diagnosticSettings.showAdvanced} onChange={(value)=>setDiagnosticSettings({...diagnosticSettings,showAdvanced:value,showGattCodes:value?diagnosticSettings.showGattCodes:false})}/><SettingsToggle label={t("showGattCodes")} detail={t("showGattCodesHint")} checked={diagnosticSettings.showGattCodes} onChange={(value)=>setDiagnosticSettings({...diagnosticSettings,showAdvanced:true,showGattCodes:value})}/></section>
     <section className="function-grid" aria-label={t("functionsTitle")}>{entries.map(({icon:Icon,title,description,available})=><article className={`panel function-card ${available?"available":"planned"}`} key={title}><div className="function-card-top"><div className="function-icon"><Icon/></div><span>{t(available?"functionAvailable":"functionPlanned")}</span></div><h3>{title}</h3><p>{description}</p></article>)}</section>
     {diagnosticSettings.showAdvanced&&<section className="panel diagnostic-method"><div className="panel-heading"><span>{t("diagnosticMethod")}</span><small>{t("diagnosticReadOnly")}</small></div><p>{t("diagnosticMethodIntro")}</p><ol><li>{t("methodStep1")}</li><li>{t("methodStep2")}</li><li>{t("methodStep3")}</li><li>{t("methodStep4")}</li></ol></section>}
     <section className="panel functions-safety"><ShieldCheck/><div><strong>{t("diagnosticReadOnly")}</strong><span>{t("diagnosticReadOnlyHint")}</span></div></section>
   </div>;
+}
+
+function PulseResistancePanel({t,gatewayUrl,snapshot}:{t:ReturnType<typeof translator>;gatewayUrl:string;snapshot:GatewaySnapshot|null}) {
+  const [status,setStatus]=useState<PulseResistanceTestStatus|null>(null);
+  const [detailsOpen,setDetailsOpen]=useState(false);
+  const [targetSoc,setTargetSoc]=useState(50);
+  const [socTolerance,setSocTolerance]=useState(3);
+  const [minimumCurrent,setMinimumCurrent]=useState(3);
+  const [confirmed,setConfirmed]=useState(false);
+  const [requestError,setRequestError]=useState(false);
+  useEffect(()=>{
+    let active=true;
+    const load=async()=>{try{const next=await fetchPulseResistanceStatus(gatewayUrl,{targetSoc,socTolerance,minimumCurrent});if(active){setStatus(next);setRequestError(false);}}catch{if(active)setRequestError(true);}};
+    void load();
+    const timer=window.setInterval(load,1200);
+    return()=>{active=false;window.clearInterval(timer);};
+  },[gatewayUrl,targetSoc,socTolerance,minimumCurrent]);
+  const start=async()=>{setRequestError(false);try{setStatus(await startPulseResistanceTest(gatewayUrl,{targetSoc,socTolerance,minimumCurrent}));}catch(error){const next=(error as {status?:PulseResistanceTestStatus}).status;if(next)setStatus(next);setRequestError(true);}};
+  const cancel=async()=>{setRequestError(false);try{setStatus(await cancelPulseResistanceTest(gatewayUrl));}catch{setRequestError(true);}};
+  const readiness=status?pulseStatusText(status.readiness,t):t("pulseStatusUnavailable");
+  const result=status?.result;
+  return <section className="panel pulse-resistance-panel">
+    <div className="pulse-resistance-heading"><div><span>{t("pulseEyebrow")}</span><h2>{t("pulseTitle")}</h2><p>{t("pulseIntro")}</p></div><div className="pulse-heading-actions"><button type="button" onClick={()=>setDetailsOpen(value=>!value)} aria-expanded={detailsOpen}>{detailsOpen?t("resistanceDetailsClose"):t("resistanceDetails")}</button><Microscope/></div></div>
+    {detailsOpen&&<div className="pulse-algorithm-details">
+      <div><strong>{t("pulseAlgorithmTitle")}</strong><p>{t("pulseAlgorithmIntro")}</p></div>
+      <ol><li>{t("pulseAlgorithmStep1")}</li><li>{t("pulseAlgorithmStep2")}</li><li>{t("pulseAlgorithmStep3")}</li><li>{t("pulseAlgorithmStep4")}</li><li>{t("pulseAlgorithmStep5")}</li><li>{t("pulseAlgorithmStep6")}</li><li>{t("pulseAlgorithmStep7")}</li></ol>
+      <div className="pulse-algorithm-notes"><p><strong>R = |ΔV / ΔI|</strong> · {t("pulseAlgorithmFormula")}</p><p>{t("pulseAlgorithmQuality")}</p></div>
+    </div>}
+    <div className="pulse-safety"><AlertTriangle/><div><strong>{t("pulseExperimental")}</strong><span>{t("pulseSafety")}</span></div></div>
+    <div className="pulse-layout">
+      <div className="pulse-controls">
+        <label><strong>{t("pulseTargetSoc")}</strong><span><input type="number" min="5" max="95" value={targetSoc} onChange={e=>setTargetSoc(Number(e.target.value))}/><b>%</b></span></label>
+        <label><strong>{t("pulseSocTolerance")}</strong><span><input type="number" min="1" max="15" value={socTolerance} onChange={e=>setSocTolerance(Number(e.target.value))}/><b>±%</b></span></label>
+        <label><strong>{t("pulseMinimumCurrent")}</strong><span><input type="number" min="1" max="100" step="0.5" value={minimumCurrent} onChange={e=>setMinimumCurrent(Number(e.target.value))}/><b>A</b></span></label>
+      </div>
+      <div className="pulse-state">
+        <div className={`pulse-state-strip ${status?.armed?"ready":"locked"}`}><strong>{status?.armed?t("pulseArmed"):t("pulseLocked")}</strong><span>{readiness}</span></div>
+        <div className="pulse-progress"><i style={{width:`${status?.progressPercent??0}%`}}/></div>
+        <small>{t("pulsePhoneArmHint")}</small>
+      </div>
+    </div>
+    <label className="pulse-confirm"><input type="checkbox" checked={confirmed} onChange={e=>setConfirmed(e.target.checked)}/><span>{t("pulseConfirm")}</span></label>
+    {requestError&&<div className="threshold-validation-error">{t("pulseRequestError")}</div>}
+    <div className="pulse-actions"><button type="button" onClick={()=>void start()} disabled={!confirmed||!status?.armed||status.readiness!=="ready"||status.active||snapshot?.connected!==true}>{t("pulseStart")}</button><button type="button" className="secondary" onClick={()=>void cancel()} disabled={!status?.active}>{t("pulseCancel")}</button></div>
+    {result&&<div className="pulse-result">
+      <div className="pulse-result-summary"><span>{t("pulseCompletedAt")}<strong>{new Date(result.completedAt).toLocaleString()}</strong></span><span>{t("pulseCurrentSequence")}<strong>{result.baselineCurrentA.toFixed(2)} → {result.interruptedCurrentA.toFixed(2)} → {result.restoredCurrentA?.toFixed(2)??"—"} A</strong></span><span>{t("soc")}<strong>{result.socPercent}%</strong></span><span>{t("temp")}<strong>{result.temperatureC.toFixed(1)} °C</strong></span></div>
+      <div className="pulse-cell-grid">{result.cells.map(cell=><article className={`pulse-cell ${cell.quality.toLowerCase()}`} key={cell.index}><span>C{cell.index}</span><strong>{cell.estimateMOhm==null?"—":`${cell.estimateMOhm.toFixed(2)} mΩ`}</strong><div className="pulse-cell-edges"><span>{t("pulseOffEdge")}: {cell.fallingEdgeMOhm==null?"—":`${cell.fallingEdgeMOhm.toFixed(2)} mΩ`}</span><span>{t("pulseOnEdge")}: {cell.returnEdgeMOhm==null?"—":`${cell.returnEdgeMOhm.toFixed(2)} mΩ`}</span></div><small>{cell.quality==="HIGH"?t("pulseQualityHigh"):cell.quality==="MEDIUM"?t("pulseQualityMedium"):t("pulseQualityRejected")}</small></article>)}</div>
+      <p className="pulse-result-note">{t("pulseResultLimit")}</p>
+    </div>}
+    <PulseResistanceHistory gatewayUrl={gatewayUrl} currentResult={result??null} t={t}/>
+  </section>;
+}
+
+function PulseResistanceHistory({gatewayUrl,currentResult,t}:{gatewayUrl:string;currentResult:PulseResistanceTestResult|null;t:ReturnType<typeof translator>}) {
+  const [records,setRecords]=useState<PulseResistanceTestResult[]>([]);
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState(false);
+  const load=async()=>{
+    try {
+      const response=await fetchPulseResistanceHistory(gatewayUrl,500);
+      setRecords(response.records);
+      setError(false);
+    } catch { setError(true); }
+    finally { setLoading(false); }
+  };
+  useEffect(()=>{
+    setLoading(true);
+    void load();
+    const timer=window.setInterval(()=>void load(),15_000);
+    return()=>window.clearInterval(timer);
+  },[gatewayUrl,currentResult?.completedAt]);
+  const visibleRecords=useMemo(()=>{
+    if(!currentResult||records.some(record=>record.completedAt===currentResult.completedAt))return records;
+    return [...records,currentResult];
+  },[records,currentResult]);
+  const comparison=useMemo(()=>comparePulseResistanceTests(visibleRecords),[visibleRecords]);
+  const anomalyCount=comparison.cells.filter(cell=>cell.severity==="warning"||cell.severity==="critical").length;
+  const date=(timestamp:number|null|undefined)=>timestamp?new Date(timestamp).toLocaleString():"—";
+  const signed=(value:number|null)=>value==null?"—":`${value>=0?"+":""}${value.toFixed(1)}%`;
+  return <div className="pulse-history">
+    <div className="pulse-history-heading"><div><span>{t("pulseHistoryEyebrow")}</span><h3>{t("pulseHistoryTitle")}</h3><p>{t("pulseHistoryIntro")}</p></div><button type="button" onClick={()=>void load()} disabled={loading}><RefreshCw/>{t("refresh")}</button></div>
+    {error&&records.length===0?<div className="pulse-history-empty error"><AlertTriangle/><span>{t("pulseHistoryUnavailable")}</span></div>:comparison.records.length<2?<div className="pulse-history-empty"><Clock3/><span>{loading?t("pulseHistoryLoading"):t("pulseHistoryNeedTests")}</span></div>:<>
+      <div className="pulse-history-summary"><span>{t("pulseHistoryTests")}<strong>{comparison.records.length}</strong></span><span>{t("pulseHistoryComparable")}<strong>{comparison.comparableCount}</strong></span><span>{t("pulseHistoryBaseline")}<strong>{date(comparison.baseline?.completedAt)}</strong></span><span className={anomalyCount?"alert":""}>{t("pulseHistoryAnomalies")}<strong>{anomalyCount}</strong></span></div>
+      {!comparison.baseline&&<div className="pulse-history-notice"><AlertTriangle/><span>{t("pulseHistoryNoComparable")}</span></div>}
+      <div className="pulse-trend-grid">{comparison.cells.map(cell=><article key={cell.index} className={`pulse-trend-cell ${cell.severity}`}><div><strong>C{cell.index}</strong><span>{cell.latestMOhm==null?"—":`${cell.latestMOhm.toFixed(2)} mΩ`}</span></div><dl><div><dt>{t("pulseFromFirst")}</dt><dd>{signed(cell.changeFromBaselinePercent)}</dd></div><div><dt>{t("pulseFromPrevious")}</dt><dd>{signed(cell.changeFromPreviousPercent)}</dd></div></dl><small>{cell.severity==="critical"?t("pulseAnomalyCritical"):cell.severity==="warning"?t("pulseAnomalyWarning"):cell.severity==="normal"?t("normal"):t("pulseNotComparable")}</small></article>)}</div>
+      <div className="pulse-history-table"><table><thead><tr><th>{t("pulseHistoryDate")}</th><th>SOC</th><th>{t("temp")}</th><th>{t("current")}</th><th>{t("cells")}</th><th>{t("pulseHistoryCondition")}</th></tr></thead><tbody>{[...comparison.records].reverse().slice(0,20).map(record=><tr key={record.completedAt}><td>{date(record.completedAt)}</td><td>{record.socPercent}%</td><td>{record.temperatureC.toFixed(1)} °C</td><td>{record.baselineCurrentA.toFixed(2)} A</td><td>{record.cells.filter(cell=>cell.estimateMOhm!=null).length}/{record.cells.length}</td><td>{record===comparison.latest||comparison.latest&&pulseTestsComparable(record,comparison.latest)?t("pulseComparable"):t("pulseDifferentConditions")}</td></tr>)}</tbody></table></div>
+      <p className="pulse-history-limit">{t("pulseHistoryLimit")}</p>
+    </>}
+  </div>;
+}
+
+function pulseStatusText(reason:string,t:ReturnType<typeof translator>):string {
+  const keys:Record<string,Parameters<typeof t>[0]>={
+    charge_mos_control_unsupported:"pulseMosUnsupported",
+    ready:"pulseReady",not_armed:"pulseLocked",no_live_data:"pulseNoLiveData",charge_mos_state_unsupported:"pulseMosUnsupported",charge_mos_already_off:"pulseMosAlreadyOff",charge_current_not_positive:"pulseCurrentNotPositive",charge_current_too_low:"pulseCurrentLow",soc_outside_window:"pulseSocOutside",temperature_outside_window:"pulseTemperatureOutside",unsupported_cell_count:"pulseCellsUnsupported",balancing_active:"pulseBalancingActive",critical_alarm:"pulseCriticalAlarm",near_low_protection:"pulseNearProtection",near_high_protection:"pulseNearProtection",collecting_stability:"pulseCollecting",telemetry_gap:"pulseTelemetryGap",conditions_changed:"pulseConditionsChanged",current_unstable:"pulseCurrentUnstable",temperature_unstable:"pulseTemperatureUnstable",waiting_stability:"pulseCollecting",switching_charge_off:"pulseSwitchingOff",restoring_charge:"pulseRestoring",waiting_return_edge:"pulseReturnEdge",completed:"pulseCompleted",completed_one_edge:"pulseCompletedOneEdge",stability_timeout:"pulseStabilityTimeout",off_transition_timeout:"pulseOffTimeout",restore_write_failed:"pulseRestoreRequired",connection_lost_restore_required:"pulseRestoreRequired",cancelled:"pulseCancelled",cancelled_restored:"pulseCancelled",
+  };
+  return t(keys[reason]??"pulseStatusUnavailable");
 }
 
 function BalanceDiagnosticsPanel({gatewayUrl,language,t,onHide}:{gatewayUrl:string;language:Language;t:ReturnType<typeof translator>;onHide:()=>void}) {

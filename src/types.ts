@@ -1,5 +1,7 @@
 export type GatewaySnapshot = {
   apiVersion: number;
+  compatibilityId?: number;
+  gatewayVersion?: string;
   serverTime: number;
   available: boolean;
   connected: boolean;
@@ -153,4 +155,45 @@ export type ChargeSessionRecord = {
   deliveredAh: number;
   maxCurrentA: number;
   bmsName?: string;
+};
+
+export type PulseResistanceCellResult = {
+  index: number;
+  fallingEdgeMOhm: number | null;
+  returnEdgeMOhm: number | null;
+  estimateMOhm: number | null;
+  edgeDifferencePercent: number | null;
+  quality: "HIGH" | "MEDIUM" | "REJECTED";
+};
+
+export type PulseResistanceTestResult = {
+  completedAt: number;
+  baselineCurrentA: number;
+  interruptedCurrentA: number;
+  restoredCurrentA: number | null;
+  socPercent: number;
+  temperatureC: number;
+  interruptionMs: number;
+  cells: PulseResistanceCellResult[];
+};
+
+export type PulseResistanceHistoryResponse = {
+  apiVersion: number;
+  serverTime: number;
+  records: PulseResistanceTestResult[];
+};
+
+export type PulseResistanceTestStatus = {
+  apiVersion: number;
+  serverTime: number;
+  armed: boolean;
+  armedUntil: number | null;
+  readiness: string;
+  phase: "IDLE" | "WAITING_FOR_STABILITY" | "SWITCHING_CHARGE_OFF" | "RESTORING_CHARGE" |
+    "WAITING_FOR_RETURN_EDGE" | "COMPLETED" | "FAILED" | "CANCELLED" | "RESTORE_REQUIRED";
+  active: boolean;
+  reason: string;
+  startedAt: number | null;
+  progressPercent: number;
+  result: PulseResistanceTestResult | null;
 };

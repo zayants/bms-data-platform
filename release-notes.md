@@ -1,4 +1,18 @@
-# BMS Data Platform — public preview
+# BMS Data Platform — release notes
+
+## 0.7.33 / Android Gateway 0.4.8
+
+- Added a physically armed, controlled two-edge Charge MOS pulse test for comparative cell-resistance diagnostics.
+- Every completed test is retained on the phone and compared over time under similar SOC, temperature and charge-current conditions.
+- Added per-cell trend and anomaly indication relative to the pack median.
+- Added a step-by-step **Details** guide and visible switch-off/return-edge results.
+- History-sync progress is shown only when loading takes longer than five seconds.
+
+Full bilingual notes: [release-notes-0.7.33.md](release-notes-0.7.33.md).
+
+---
+
+# Previous public preview
 
 This first public preview combines:
 
