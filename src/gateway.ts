@@ -117,6 +117,9 @@ export async function cancelPulseResistanceTest(baseUrl: string): Promise<PulseR
 export class GatewayClient {
   private source: EventSource | null = null;
   private pollTimer: number | null = null;
+  private request: AbortController | null = null;
+  private generation = 0;
+  private lastReceivedAt = 0;
 
   constructor(
     private readonly baseUrl: string,
@@ -134,17 +137,23 @@ export class GatewayClient {
       try {
         const snapshot = JSON.parse((event as MessageEvent).data) as GatewaySnapshot;
         if (!this.acceptSnapshot(snapshot)) return;
+        this.lastReceivedAt = Date.now();
         this.onSnapshot(snapshot);
         this.onConnectionChange(true);
       } catch {
-        this.onConnectionChange(false);
+        void this.fetchSnapshot();
       }
     });
-    this.source.onerror = () => this.onConnectionChange(false);
+    // SSE reconnection alone is not a network loss: HTTP polling may still work.
+    this.source.onerror = () => { void this.fetchSnapshot(); };
     this.source.onopen = () => undefined;
   }
 
   stop(): void {
+    this.generation += 1;
+    this.request?.abort();
+    this.request = null;
+    this.lastReceivedAt = 0;
     this.source?.close();
     this.source = null;
     if (this.pollTimer !== null) window.clearInterval(this.pollTimer);
@@ -152,10 +161,17 @@ export class GatewayClient {
   }
 
   private async fetchSnapshot(): Promise<void> {
+    if (this.request) return;
+    const generation = this.generation;
+    const controller = new AbortController();
+    this.request = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
     try {
-      const response = await fetch(addClientCompatibility(`${this.baseUrl}/api/v1/snapshot`), { cache: "no-store" });
+      const response = await fetch(addClientCompatibility(`${this.baseUrl}/api/v1/snapshot`), { cache: "no-store", signal: controller.signal });
+      if (generation !== this.generation) return;
       if (response.status === 426) {
         const body = await response.json().catch(() => ({})) as { requiredCompatibilityId?: number; gatewayVersion?: string };
+        if (generation !== this.generation) return;
         this.onCompatibilityChange({
           kind: "rejected",
           expected: GATEWAY_COMPATIBILITY_ID,
@@ -167,11 +183,16 @@ export class GatewayClient {
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const snapshot = await response.json() as GatewaySnapshot;
+      if (generation !== this.generation) return;
       if (!this.acceptSnapshot(snapshot)) return;
+      this.lastReceivedAt = Date.now();
       this.onSnapshot(snapshot);
       this.onConnectionChange(true);
     } catch {
-      this.onConnectionChange(false);
+      if (generation === this.generation && (!this.lastReceivedAt || Date.now() - this.lastReceivedAt >= 8000)) this.onConnectionChange(false);
+    } finally {
+      window.clearTimeout(timeout);
+      if (this.request === controller) this.request = null;
     }
   }
 

@@ -30,6 +30,7 @@ import { subscribeHistorySync, type HistorySyncState } from "./historySync";
 import { exportHistoryDatabaseSql } from "./historyCache";
 import { GATEWAY_COMPATIBILITY_ID, type GatewayCompatibilityIssue } from "./apiCompatibility";
 import { comparePulseResistanceTests, pulseTestsComparable } from "./pulseResistanceDiagnostics";
+import { historyPaths, historyContinuity } from "./historyGaps";
 
 const makeId = () => typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
   ? crypto.randomUUID()
@@ -245,7 +246,7 @@ function App() {
       {compatibilityIssue && page === "connection" && <CompatibilityBlock issue={compatibilityIssue} t={t}/>}
       {compatibilityIssue && page !== "connection" ? <CompatibilityBlock issue={compatibilityIssue} t={t} onOpenConnection={()=>setPage("connection")}/> : <>
         {page === "overview" && <Overview snapshot={snapshot} t={t} cellStats={cellStats}/>}
-        {page === "history" && <HistoryPage gatewayUrl={gatewayUrl} t={t} language={language} snapshot={snapshot} cellStats={cellStats} chartSettings={chartSettings} setChartSettings={setChartSettings}/>}
+        {page === "history" && <HistoryPage gatewayUrl={gatewayUrl} gatewayEvents={events} t={t} language={language} snapshot={snapshot} cellStats={cellStats} chartSettings={chartSettings} setChartSettings={setChartSettings}/>}
         {page === "functions" && <FunctionsPage t={t} diagnosticSettings={diagnosticSettings} setDiagnosticSettings={setDiagnosticSettings} gatewayUrl={gatewayUrl} snapshot={snapshot}/>}
         {page === "events" && <EventsPage events={events} chargeSessions={chargeSessions} snapshot={snapshot} t={t} acknowledgedAlarmKey={acknowledgedAlarmKey} onAcknowledge={(key)=>setAcknowledgedAlarmKey(key)} onClearEvents={()=>setEvents([])} onClearChargeSessions={()=>{const now=Date.now();localStorage.setItem("bms-charge-sessions-reset-at",String(now));setChargeSessionsResetAt(now);}}/>}
         {page === "connection" && <ConnectionPage t={t} gatewayUrl={gatewayUrl} draftUrl={draftUrl} setDraftUrl={setDraftUrl} connect={connect} language={language} state={connectionState} snapshot={snapshot} showGattCodes={diagnosticSettings.showGattCodes}/>}
@@ -389,10 +390,12 @@ function loadSignedColors(): Record<SignedHistoryMetric, DirectionalColors> {
   } catch { return structuredClone(DEFAULT_SIGNED_COLORS); }
 }
 
-function splitSignedPaths<T>(points: T[], value: (point: T) => number, x: (point: T) => number, y: (value: number) => number) {
+function splitSignedPaths<T extends {timestamp:number}>(points: T[], value: (point: T) => number, x: (point: T) => number, y: (value: number) => number, events:ConnectionHistoryEvent[] = []) {
+  const connected = historyContinuity(points, events);
   const positive: Array<{ line: string; area: string }> = [];
   const negative: Array<{ line: string; area: string }> = [];
   for (let index = 1; index < points.length; index += 1) {
+    if (!connected(points[index-1],points[index])) continue;
     const before = value(points[index - 1]);
     const after = value(points[index]);
     if (!Number.isFinite(before) || !Number.isFinite(after)) continue;
@@ -735,7 +738,8 @@ function historyPointLimit(period: HistoryPeriod): number {
 }
 
 const HistoryRangeStatus = React.createContext("");
-function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,setChartSettings}:{gatewayUrl:string;t:ReturnType<typeof translator>;language:Language;snapshot:GatewaySnapshot|null;cellStats:ReturnType<typeof calculateCellStats>;chartSettings:ChartDisplaySettings;setChartSettings:(settings:ChartDisplaySettings)=>void}) {
+const HistoryEventWindow = React.createContext({from:0,to:0});
+function HistoryPage({gatewayUrl,gatewayEvents,t,language,snapshot,cellStats,chartSettings,setChartSettings}:{gatewayUrl:string;gatewayEvents:MonitorEvent[];t:ReturnType<typeof translator>;language:Language;snapshot:GatewaySnapshot|null;cellStats:ReturnType<typeof calculateCellStats>;chartSettings:ChartDisplaySettings;setChartSettings:(settings:ChartDisplaySettings)=>void}) {
   const [period, setPeriod] = useState<HistoryPeriod>(() => {
     const saved = localStorage.getItem("bms-history-period") as HistoryPeriod | null;
     return HISTORY_PERIODS.some(([id]) => id === saved) ? saved! : "day";
@@ -752,16 +756,23 @@ function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,set
   const [timeZoom, setTimeZoom] = useState<{from:number;to:number}|null>(null);
   const [dragSelection,setDragSelection]=useState<DragZoomSelection|null>(null);
   const autoRefreshInterval = period === "year" ? 60_000 : 15_000;
-  const freshSnapshotTime = snapshot?.connected && !snapshot.stale
-    ? snapshot.timestamp ?? snapshot.serverTime
-    : 0;
-  const autoRefreshBucket = freshSnapshotTime > 0
-    ? Math.floor(freshSnapshotTime / autoRefreshInterval)
-    : -1;
+  const historyRequest = useRef(0);
+  const historyBusy = useRef(false);
+  useEffect(()=>{
+    const timer=window.setInterval(()=>{if(!historyBusy.current)setRefreshToken(n=>n+1);},autoRefreshInterval);
+    return ()=>window.clearInterval(timer);
+  },[autoRefreshInterval]);
+  const connectionEvents:ConnectionHistoryEvent[] = [
+    ...(history?.connectionEvents??[]),
+    ...gatewayEvents.filter(e=>(e.kind==="lost"||e.kind==="restored")&&normalizeGatewayUrl(e.details)===normalizeGatewayUrl(gatewayUrl))
+      .map(e=>({timestamp:e.timestamp,type:e.kind==="lost"?"LOST" as const:"RESTORED" as const,durationMs:null,bmsName:"",source:"gateway" as const})),
+  ];
 
   useEffect(() => {
     let active = true;
     const duration = HISTORY_PERIODS.find(([id]) => id === period)?.[1] ?? HISTORY_PERIODS[1][1];
+    const requestId=++historyRequest.current;
+    historyBusy.current=true;
     const to = Date.now();
     setLoading(true);
     setError(false);
@@ -772,9 +783,9 @@ function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,set
         if (result.points.length > 0) setHistory(result);
       } })
       .catch(() => { if (active) setError(true); })
-      .finally(() => { if (active) { setLoading(false); setRangePending(false); } });
+      .finally(() => { if(requestId===historyRequest.current)historyBusy.current=false; if (active) { setLoading(false); setRangePending(false); } });
     return () => { active = false; };
-  }, [gatewayUrl, period, refreshToken, autoRefreshBucket]);
+  }, [gatewayUrl, period, refreshToken]);
 
   useEffect(() => setTimeZoom(null), [gatewayUrl, period]);
   useEffect(()=>{const resetAfterFullscreen=()=>{if(!document.fullscreenElement)setTimeZoom(null);};document.addEventListener("fullscreenchange",resetAfterFullscreen);return()=>document.removeEventListener("fullscreenchange",resetAfterFullscreen);},[]);
@@ -799,7 +810,7 @@ function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,set
   const sourcePoints = history?.points ?? [];
   const applyTimeZoom=(from:number,to:number)=>{
     if(sourcePoints.length<2)return;
-    const baseFrom=sourcePoints[0].timestamp,baseTo=sourcePoints.at(-1)!.timestamp;
+    const baseFrom=sourcePoints[0].timestamp,baseTo=Math.max(sourcePoints.at(-1)!.timestamp,history?.to??0);
     const safeFrom=Math.max(baseFrom,Math.min(from,to)),safeTo=Math.min(baseTo,Math.max(from,to));
     if(safeTo-safeFrom>=(baseTo-baseFrom)*.995){setTimeZoom(null);return;}
     if(sourcePoints.filter((point)=>point.timestamp>=safeFrom&&point.timestamp<=safeTo).length>=2)setTimeZoom({from:safeFrom,to:safeTo});
@@ -833,7 +844,7 @@ function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,set
     const chart=target.closest("svg");
     if(!chart||!document.fullscreenElement||!document.fullscreenElement.contains(chart)||sourcePoints.length<3||(event.buttons&2)===0)return;
     event.preventDefault();
-    const baseFrom=sourcePoints[0].timestamp,baseTo=sourcePoints.at(-1)!.timestamp,baseRange=Math.max(1,baseTo-baseFrom);
+    const baseFrom=sourcePoints[0].timestamp,baseTo=Math.max(sourcePoints.at(-1)!.timestamp,history?.to??0),baseRange=Math.max(1,baseTo-baseFrom);
     const currentFrom=timeZoom?.from??baseFrom,currentTo=timeZoom?.to??baseTo,currentRange=currentTo-currentFrom;
     const factor = event.deltaY < 0 ? 0.78 : 1.28;
     const nextRange=Math.max(baseRange/250,Math.min(baseRange,currentRange*factor));
@@ -868,7 +879,7 @@ function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,set
     if(!selection||selection.pointerId!==event.pointerId)return;
     setDragSelection(null);
     if(Math.abs(event.clientX-selection.startX)<18||sourcePoints.length<2)return;
-    const baseFrom=sourcePoints[0].timestamp,baseTo=sourcePoints.at(-1)!.timestamp;
+    const baseFrom=sourcePoints[0].timestamp,baseTo=Math.max(sourcePoints.at(-1)!.timestamp,history?.to??0);
     const currentFrom=timeZoom?.from??baseFrom,currentTo=timeZoom?.to??baseTo,currentRange=currentTo-currentFrom;
     const first=Math.max(0,Math.min(1,(selection.startX-selection.left)/selection.width));
     const last=Math.max(0,Math.min(1,(event.clientX-selection.left)/selection.width));
@@ -879,7 +890,8 @@ function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,set
     if(document.fullscreenElement&&target.closest("svg")&&document.fullscreenElement.contains(target))setTimeZoom(null);
   };
   const zoomFactor=timeZoom&&sourcePoints.length>1?(sourcePoints.at(-1)!.timestamp-sourcePoints[0].timestamp)/(timeZoom.to-timeZoom.from):1;
-  const viewport:TimeViewport={baseFrom:sourcePoints[0]?.timestamp??0,baseTo:sourcePoints.at(-1)?.timestamp??1,from:timeZoom?.from??sourcePoints[0]?.timestamp??0,to:timeZoom?.to??sourcePoints.at(-1)?.timestamp??1,setRange:applyTimeZoom,reset:()=>setTimeZoom(null)};
+  const displayEnd=Math.max(sourcePoints.at(-1)?.timestamp??0,history?.to??0);
+  const viewport:TimeViewport={baseFrom:sourcePoints[0]?.timestamp??0,baseTo:displayEnd,from:timeZoom?.from??sourcePoints[0]?.timestamp??0,to:timeZoom?.to??displayEnd,setRange:applyTimeZoom,reset:()=>setTimeZoom(null)};
   const hideHistorySection=(section:keyof HistorySectionVisibility)=>setChartSettings({...chartSettings,historySections:{...chartSettings.historySections,[section]:false}});
 
   return <div className={`page-content history-page ${dragSelection?"selecting-time":""}`} onWheel={handleHistoryWheel} onContextMenu={handleChartContextMenu} onPointerDown={handleZoomPointerDown} onPointerMove={handleZoomPointerMove} onPointerUp={handleZoomPointerEnd} onPointerCancel={handleZoomPointerEnd} onDoubleClick={handleChartDoubleClick}>
@@ -902,20 +914,20 @@ function HistoryPage({gatewayUrl,t,language,snapshot,cellStats,chartSettings,set
     {loading && points.length === 0 && <div className="history-message"><RefreshCw className="spin"/><span>{t("loadingHistory")}</span></div>}
     {!loading && error && <div className="alarm-banner"><AlertTriangle/><div><strong>{t("historyError")}</strong><span>{normalizeGatewayUrl(gatewayUrl)}</span></div></div>}
     {!loading && !error && points.length === 0 && <div className="history-message"><ChartNoAxesCombined/><span>{t("noHistory")}</span></div>}
-    {points.length > 0 && <HistoryRangeStatus.Provider value={rangePending?t("loadingHistory"):error?t("historyError"):rangeEmpty?t("noHistory"):""}>
+    {points.length > 0 && <HistoryEventWindow.Provider value={{from:viewport.from,to:Math.max(viewport.to,timeZoom?0:Date.now())}}><HistoryRangeStatus.Provider value={rangePending?t("loadingHistory"):rangeEmpty?t("noHistory"):""}>
       {chartSettings.historySections.compositeChart&&<><section className="panel chart-composer">
         <div className="composer-heading"><div><strong>{t("visibleCurves")}</strong><span>{t("dragHint")}</span></div>
         </div>
         <div className="series-palette">{series.map((item) => <div className="series-choice" key={item.id}><button draggable onDragStart={(event) => event.dataTransfer.setData("text/bms-history-metric", item.id)} onClick={() => toggleMetric(item.id)} className={selectedMetrics.includes(item.id) ? "selected" : ""} aria-pressed={selectedMetrics.includes(item.id)}><i style={{background:item.color}}/>{item.title}<span>{selectedMetrics.includes(item.id) ? "✓" : "+"}</span></button>{item.directionalColors?<SignedColorInputs series={item} t={t} onChange={(direction,color)=>setSignedColor(item.id as SignedHistoryMetric,direction,color)}/>:<label title={t("curveColor")}><input type="color" value={item.color} aria-label={`${t("curveColor")}: ${item.title}`} onChange={(event) => setSeriesColor(item.id,event.target.value)}/></label>}</div>)}</div>
       </section>
-      <CompositeHistoryChart points={points} connectionEvents={history?.connectionEvents ?? []} socEvents={socBoundaryEvents} selectedSeries={selectedSeries} period={period} setPeriod={selectPeriod} language={language} t={t} addMetric={addMetric} removeMetric={removeMetric} viewport={viewport} thresholds={thresholds} chartSettings={chartSettings} packVoltageRange={packVoltageRange} onHide={()=>hideHistorySection("compositeChart")}/>
+      <CompositeHistoryChart points={points} connectionEvents={connectionEvents} socEvents={socBoundaryEvents} selectedSeries={selectedSeries} period={period} setPeriod={selectPeriod} language={language} t={t} addMetric={addMetric} removeMetric={removeMetric} viewport={viewport} thresholds={thresholds} chartSettings={chartSettings} packVoltageRange={packVoltageRange} onHide={()=>hideHistorySection("compositeChart")}/>
       </>}
-      {chartSettings.historySections.cellVoltageChart&&<CellVoltageHistoryChart points={points} socEvents={history?.socEvents ?? []} connectionEvents={history?.connectionEvents ?? []} supportSeries={series} setSeriesColor={setSeriesColor} setSignedColor={setSignedColor} period={period} setPeriod={selectPeriod} language={language} t={t} viewport={viewport} thresholds={thresholds.filter((threshold)=>threshold.metric==="cellVoltageV")} bmsReferences={bmsThresholdReferences("cellVoltageV",snapshot?.protectionSettings,t)} chemistry={snapshot?.chemistry} protectionSettings={snapshot?.protectionSettings} chartSettings={chartSettings} setChartSettings={setChartSettings} onHide={()=>hideHistorySection("cellVoltageChart")}/>}
+      {chartSettings.historySections.cellVoltageChart&&<CellVoltageHistoryChart points={points} socEvents={history?.socEvents ?? []} connectionEvents={connectionEvents} supportSeries={series} setSeriesColor={setSeriesColor} setSignedColor={setSignedColor} period={period} setPeriod={selectPeriod} language={language} t={t} viewport={viewport} thresholds={thresholds.filter((threshold)=>threshold.metric==="cellVoltageV")} bmsReferences={bmsThresholdReferences("cellVoltageV",snapshot?.protectionSettings,t)} chemistry={snapshot?.chemistry} protectionSettings={snapshot?.protectionSettings} chartSettings={chartSettings} setChartSettings={setChartSettings} onHide={()=>hideHistorySection("cellVoltageChart")}/>}
       {chartSettings.historySections.cellEnergyEstimate&&<CellEnergyEstimatePanel gatewayUrl={gatewayUrl} snapshot={snapshot} t={t} onHide={()=>hideHistorySection("cellEnergyEstimate")}/>}
-      {chartSettings.historySections.cellResistanceChart&&<CellResistanceHistoryChart points={points} connectionEvents={history?.connectionEvents ?? []} period={period} setPeriod={selectPeriod} language={language} t={t} viewport={viewport} thresholds={thresholds} chartSettings={chartSettings} setChartSettings={setChartSettings} onHide={()=>hideHistorySection("cellResistanceChart")}/>}
-      {visibleIndividualSeries.length>0&&<IndividualHistoryCharts points={points} connectionEvents={history?.connectionEvents ?? []} socEvents={socBoundaryEvents} series={visibleIndividualSeries} period={period} setPeriod={selectPeriod} language={language} t={t} viewport={viewport} thresholds={thresholds} protectionSettings={snapshot?.protectionSettings} packVoltageRange={packVoltageRange} chartSettings={chartSettings} setChartSettings={setChartSettings} setSeriesColor={setSeriesColor} setSignedColor={setSignedColor}/>}
+      {chartSettings.historySections.cellResistanceChart&&<CellResistanceHistoryChart points={points} connectionEvents={connectionEvents} period={period} setPeriod={selectPeriod} language={language} t={t} viewport={viewport} thresholds={thresholds} chartSettings={chartSettings} setChartSettings={setChartSettings} onHide={()=>hideHistorySection("cellResistanceChart")}/>}
+      {visibleIndividualSeries.length>0&&<IndividualHistoryCharts points={points} connectionEvents={connectionEvents} socEvents={socBoundaryEvents} series={visibleIndividualSeries} period={period} setPeriod={selectPeriod} language={language} t={t} viewport={viewport} thresholds={thresholds} protectionSettings={snapshot?.protectionSettings} packVoltageRange={packVoltageRange} chartSettings={chartSettings} setChartSettings={setChartSettings} setSeriesColor={setSeriesColor} setSignedColor={setSignedColor}/>}
       {chartSettings.historySections.correlationChart&&<CorrelationChart points={points} title={t("currentPowerCorrelation")} noDataLabel={t("noCorrelationData")} t={t} onHide={()=>hideHistorySection("correlationChart")}/>}
-    </HistoryRangeStatus.Provider>}
+    </HistoryRangeStatus.Provider></HistoryEventWindow.Provider>}
     {chartSettings.historySections.balanceDiagnostics&&<BalanceDiagnosticsPanel gatewayUrl={gatewayUrl} language={language} t={t} onHide={()=>hideHistorySection("balanceDiagnostics")}/>}
   </div>;
 }
@@ -997,9 +1009,10 @@ function ChartMarkerLines({markers,x,top,bottom,onPointerDown}:{markers:ChartMar
 }
 
 function ConnectionEventMarkers({events,points,x,yValue,left,right,top,bottom,language,t}:{events:ConnectionHistoryEvent[];points:HistoryPoint[];x:(timestamp:number)=>number;yValue:(point:HistoryPoint)=>number|null|undefined;left:number;right:number;top:number;bottom:number;language:Language;t:ReturnType<typeof translator>}) {
+  const eventWindow=React.useContext(HistoryEventWindow);
   if(points.length===0||events.length===0)return null;
   const firstTime=points[0].timestamp,lastTime=points.at(-1)!.timestamp;
-  return <>{events.filter((event)=>event.timestamp>=firstTime&&event.timestamp<=lastTime).map((event,index)=>{
+  return <>{events.filter((event)=>event.timestamp>=(eventWindow.from||firstTime)&&event.timestamp<=(eventWindow.to||lastTime)).map((event,index)=>{
     const usable=points.map((point)=>({point,y:yValue(point)})).filter((item):item is {point:HistoryPoint;y:number}=>Number.isFinite(item.y));
     if(usable.length===0)return null;
     const directional=event.type==="LOST"
@@ -1008,11 +1021,12 @@ function ConnectionEventMarkers({events,points,x,yValue,left,right,top,bottom,la
     const anchor=directional??usable.reduce((nearest,item)=>Math.abs(item.point.timestamp-event.timestamp)<Math.abs(nearest.point.timestamp-event.timestamp)?item:nearest);
     const cx=Math.max(left+14,Math.min(right-14,x(anchor.point.timestamp)));
     const cy=Math.max(top+14,Math.min(bottom-14,anchor.y));
-    const label=`${t(event.type==="LOST"?"connectionLost":"connectionRestored")} · ${new Date(event.timestamp).toLocaleString(language)}${event.bmsName?` · ${event.bmsName}`:""}`;
+    const gateway=event.source==="gateway";
+    const label=`${gateway?t(event.type==="LOST"?"gatewayLinkLost":"gatewayLinkRestored"):t(event.type==="LOST"?"connectionLost":"connectionRestored")} · ${new Date(event.timestamp).toLocaleString(language)}${event.bmsName?` · ${event.bmsName}`:""}`;
     return <g className={`bms-connection-marker ${event.type.toLowerCase()}`} key={`${event.timestamp}-${event.type}-${index}`} role="img" aria-label={label}>
       <title>{label}</title>
       <rect x={cx-13} y={cy-13} width="26" height="26" rx="5"/>
-      <path d={`M ${cx-4} ${cy-6} L ${cx+4} ${cy+2} L ${cx} ${cy+6} V ${cy-6} L ${cx+4} ${cy-2} L ${cx-4} ${cy+6}`}/>
+      {gateway?<><path d={`M ${cx-8} ${cy-3} Q ${cx} ${cy-11} ${cx+8} ${cy-3} M ${cx-5} ${cy} Q ${cx} ${cy-5} ${cx+5} ${cy}`}/><circle cx={cx} cy={cy+5} r="2" fill="white"/></>:<path d={`M ${cx-4} ${cy-6} L ${cx+4} ${cy+2} L ${cx} ${cy+6} V ${cy-6} L ${cx+4} ${cy-2} L ${cx-4} ${cy+6}`}/>}
       {event.type==="LOST"&&<line x1={cx-9} y1={cy-9} x2={cx+9} y2={cy+9}/>}
     </g>;
   })}</>;
@@ -1095,8 +1109,8 @@ function CompositeHistoryChart({ points, connectionEvents, socEvents, selectedSe
   const laneGap = 12;
   const lanesHeight = selectedSeries.length * laneHeight + Math.max(0, selectedSeries.length - 1) * laneGap;
   const height = top + lanesHeight + bottom;
-  const firstTime = points[0].timestamp;
-  const lastTime = points[points.length - 1].timestamp;
+  const firstTime = viewport.from;
+  const lastTime = viewport.to;
   const timeRange = Math.max(1, lastTime - firstTime);
   const x = (timestamp: number) => left + (timestamp - firstTime) / timeRange * (width - left - right);
   const updateMarker = (id: string, patch: Partial<ChartMarker>) => setMarkers((current) => current.map((marker) => marker.id === id ? { ...marker, ...patch } : marker));
@@ -1122,10 +1136,9 @@ function CompositeHistoryChart({ points, connectionEvents, socEvents, selectedSe
   };
   const socSeriesIndex=selectedSeries.findIndex((series)=>series.id==="socPercent");
   const paths = selectedSeries.map((series, seriesIndex) => {
-    const path = points.map((point, pointIndex) => `${pointIndex === 0 ? "M" : "L"}${x(point.timestamp).toFixed(1)},${y(series, series.value(point), seriesIndex).toFixed(1)}`).join(" ");
     const baseline = series.id === "currentA" || series.id === "powerW" ? y(series, 0, seriesIndex) : laneBottom(seriesIndex);
-    const areaPath = `${path} L${x(points[points.length - 1].timestamp).toFixed(1)},${baseline.toFixed(1)} L${x(points[0].timestamp).toFixed(1)},${baseline.toFixed(1)} Z`;
-    const directionalPaths = series.directionalColors ? splitSignedPaths(points, series.value, (point)=>x(point.timestamp), (value)=>y(series,value,seriesIndex)) : null;
+    const {line:path,area:areaPath} = historyPaths(points,series.value,x,(value)=>y(series,value,seriesIndex),baseline,connectionEvents);
+    const directionalPaths = series.directionalColors ? splitSignedPaths(points, series.value, (point)=>x(point.timestamp), (value)=>y(series,value,seriesIndex),connectionEvents) : null;
     return { series, seriesIndex, path, areaPath, directionalPaths };
   });
   const date = (timestamp: number) => new Date(timestamp).toLocaleString(language, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
@@ -1272,8 +1285,8 @@ function CellVoltageHistoryChart({ points, socEvents, connectionEvents, supportS
   const laneGap = 12;
   const supportHeight = activeSupportSeries.length ? laneGap+activeSupportSeries.length*supportLaneHeight+Math.max(0,activeSupportSeries.length-1)*laneGap : 0;
   const height = top+cellLaneHeight+supportHeight+bottom;
-  const firstTime = points[0].timestamp;
-  const lastTime = points[points.length - 1].timestamp;
+  const firstTime = viewport.from;
+  const lastTime = viewport.to;
   const timeRange = Math.max(1, lastTime - firstTime);
   const x = (timestamp: number) => left + (timestamp - firstTime) / timeRange * (width-left-right);
   // Keep the cell traces readable. Distant BMS thresholds are clamped to the
@@ -1296,9 +1309,9 @@ function CellVoltageHistoryChart({ points, socEvents, connectionEvents, supportS
   const date = (timestamp: number) => new Date(timestamp).toLocaleString(language,{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
   const paths = activeCells.map((cellIndex) => ({
     cellIndex,
-    path: points.map((point) => ({timestamp:point.timestamp,value:point.cellsV?.[cellIndex]})).filter((item): item is {timestamp:number;value:number} => Number.isFinite(item.value)).map((item,index) => `${index===0?"M":"L"}${x(item.timestamp).toFixed(1)},${cellY(item.value).toFixed(1)}`).join(" "),
+    path: historyPaths(points,p=>p.cellsV?.[cellIndex],x,cellY,top+cellLaneHeight,connectionEvents).line,
   })).filter((item) => item.path);
-  const supportPaths = activeSupportSeries.map((series,seriesIndex)=>({series,seriesIndex,path:points.map((point,index)=>`${index===0?"M":"L"}${x(point.timestamp).toFixed(1)},${supportY(series,series.value(point),seriesIndex).toFixed(1)}`).join(" "),directionalPaths:series.directionalColors?splitSignedPaths(points,series.value,(point)=>x(point.timestamp),(value)=>supportY(series,value,seriesIndex)):null}));
+  const supportPaths = activeSupportSeries.map((series,seriesIndex)=>({series,seriesIndex,path:historyPaths(points,series.value,x,value=>supportY(series,value,seriesIndex),0,connectionEvents).line,directionalPaths:series.directionalColors?splitSignedPaths(points,series.value,(point)=>x(point.timestamp),(value)=>supportY(series,value,seriesIndex),connectionEvents):null}));
   const hoveredPoint = hoveredIndex == null ? null : points[hoveredIndex];
   const selectedEvent = boundaryEvents.find((event)=>event.timestamp===selectedEventTimestamp) ?? null;
   const handlePointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
@@ -1395,7 +1408,7 @@ function CellResistanceHistoryChart({points,connectionEvents,period,setPeriod,la
   const activeCells=selectedCells.filter((index)=>index<cellCount);
   if(validPoints.length===0)return <article ref={panelRef} className="panel cell-history-chart resistance-history-chart"><div className="panel-heading"><span>{t("resistanceHistory")}</span><button type="button" className="fullscreen-chart-button hide-chart-button" onClick={onHide} title={t("hideChart")} aria-label={`${t("hideChart")}: ${t("resistanceHistory")}`}><EyeOff/></button></div><ResistanceMethodNote t={t} open={showResistanceMethod} setOpen={setShowResistanceMethod}/><div className="chart-empty"><Activity/><span>{t("noResistanceHistory")}</span></div></article>;
   const width=1200,height=430,left=78,right=28,top=28,bottom=58;
-  const firstTime=points[0].timestamp,lastTime=points.at(-1)!.timestamp,timeRange=Math.max(1,lastTime-firstTime);
+  const firstTime=viewport.from,lastTime=viewport.to,timeRange=Math.max(1,lastTime-firstTime);
   const x=(timestamp:number)=>left+(timestamp-firstTime)/timeRange*(width-left-right);
   const resistanceThresholds=thresholds.filter((threshold)=>threshold.metric==="cellResistanceMOhm");
   const values=[...points.flatMap((point)=>activeCells.map((index)=>point.cellResistanceMOhm?.[index]).filter((value):value is number=>Number.isFinite(value))),...resistanceThresholds.map((threshold)=>threshold.value)];
@@ -1403,7 +1416,7 @@ function CellResistanceHistoryChart({points,connectionEvents,period,setPeriod,la
   if(minimum===maximum){minimum=Math.max(0,minimum-.1);maximum+=.1;}const padding=(maximum-minimum)*.08;minimum=Math.max(0,minimum-padding);maximum+=padding;
   const y=(value:number)=>top+(maximum-value)/(maximum-minimum)*(height-top-bottom);
   const date=(timestamp:number)=>new Date(timestamp).toLocaleString(language,{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
-  const paths=activeCells.map((cellIndex)=>({cellIndex,path:points.map((point)=>({timestamp:point.timestamp,value:point.cellResistanceMOhm?.[cellIndex]})).filter((item):item is {timestamp:number;value:number}=>Number.isFinite(item.value)).map((item,index)=>`${index===0?"M":"L"}${x(item.timestamp).toFixed(1)},${y(item.value).toFixed(1)}`).join(" ")})).filter((item)=>item.path);
+  const paths=activeCells.map((cellIndex)=>({cellIndex,path:historyPaths(points,p=>p.cellResistanceMOhm?.[cellIndex],x,y,height-bottom,connectionEvents).line})).filter((item)=>item.path);
   const hoveredPoint=hoveredIndex==null?null:points[hoveredIndex];
   const move=(event:ReactPointerEvent<SVGSVGElement>)=>{const bounds=event.currentTarget.getBoundingClientRect();const position=Math.max(left,Math.min(width-right,(event.clientX-bounds.left)/bounds.width*width));const timestamp=firstTime+(position-left)/(width-left-right)*timeRange;if(draggingMarkerId){setMarkers((current)=>current.map((marker)=>marker.id===draggingMarkerId?{...marker,timestamp}:marker));return;}let nearest=0;for(let index=1;index<points.length;index+=1)if(Math.abs(points[index].timestamp-timestamp)<Math.abs(points[nearest].timestamp-timestamp))nearest=index;setHoveredIndex(nearest);};
   return <article ref={panelRef} className={`panel cell-history-chart resistance-history-chart ${chartSettings.showCurveShadows?"":"no-curve-shadows"}`}>
@@ -1564,8 +1577,8 @@ function IndividualMetricChart({points,connectionEvents,socEvents,series,period,
   const right=28;
   const top=24;
   const bottom=54;
-  const firstTime=points[0].timestamp;
-  const lastTime=points[points.length-1].timestamp;
+  const firstTime=viewport.from;
+  const lastTime=viewport.to;
   const timeRange=Math.max(1,lastTime-firstTime);
   const x=(timestamp:number)=>left+(timestamp-firstTime)/timeRange*(width-left-right);
   const dataValues=points.map(series.value).filter(Number.isFinite);
@@ -1582,10 +1595,9 @@ function IndividualMetricChart({points,connectionEvents,socEvents,series,period,
     maximum+=padding;
   }
   const y=(value:number)=>top+(maximum-value)/(maximum-minimum)*(height-top-bottom);
-  const linePath=points.map((point,index)=>`${index===0?"M":"L"}${x(point.timestamp).toFixed(1)},${y(series.value(point)).toFixed(1)}`).join(" ");
   const baseline=series.directionalColors?y(0):height-bottom;
-  const areaPath=`${linePath} L${x(lastTime).toFixed(1)},${baseline.toFixed(1)} L${x(firstTime).toFixed(1)},${baseline.toFixed(1)} Z`;
-  const directionalPaths=series.directionalColors?splitSignedPaths(points,series.value,(point)=>x(point.timestamp),y):null;
+  const {line:linePath,area:areaPath}=historyPaths(points,series.value,x,y,baseline,connectionEvents);
+  const directionalPaths=series.directionalColors?splitSignedPaths(points,series.value,(point)=>x(point.timestamp),y,connectionEvents):null;
   const date=(timestamp:number)=>new Date(timestamp).toLocaleString(language,{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
   const hoveredPoint=hoveredIndex==null?null:points[hoveredIndex];
   const handlePointerMove=(event:ReactPointerEvent<SVGSVGElement>)=>{

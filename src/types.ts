@@ -107,6 +107,7 @@ export type SocBoundaryEvent = {
 };
 
 export type ConnectionHistoryEvent = {
+  source?: "bms" | "gateway";
   timestamp: number;
   type: "LOST" | "RESTORED";
   durationMs: number | null;

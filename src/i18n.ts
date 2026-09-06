@@ -3,9 +3,11 @@ export const languages = [
 ] as const;
 
 export type Language = typeof languages[number][0];
-export const APP_VERSION = "0.7.34";
+export const APP_VERSION = "0.7.35";
 
 const en = {
+  gatewayLinkLost: "Connection to phone gateway lost (Wi-Fi / network)",
+  gatewayLinkRestored: "Connection to phone gateway restored (Wi-Fi / network)",
   passwordReminder: "CHANGE BMS PASSWORD", passwordReminderHint: "The BMS requests that its authorization password be changed.", historySyncCheckingHint:"Comparing the phone history with the local cache…",
   appTitle: "BMS DATA PLATFORM", nominalCapacity: "NOMINAL CAPACITY", chemistry: "CHEMISTRY", subtitle: "Battery monitoring system", overview: "Overview", cells: "Cells",
   events: "Events", connection: "Connection", live: "LIVE DATA", stale: "STALE DATA", offline: "OFFLINE",
@@ -320,6 +322,8 @@ Object.assign(uk, {
   pulseHistoryEyebrow:"ДОВГОСТРОКОВА ДІАГНОСТИКА",pulseHistoryTitle:"ІСТОРІЯ ТА ПОРІВНЯННЯ ІМПУЛЬСНИХ ТЕСТІВ",pulseHistoryIntro:"Кожен завершений тест зберігається на телефоні та може порівнюватися через місяці. Останній результат зіставляється лише з тестами за близьких SOC, температури та струму заряду.",pulseHistoryLoading:"ЗАВАНТАЖУЮ ЗБЕРЕЖЕНІ ТЕСТИ…",pulseHistoryUnavailable:"Установлена версія телефона-шлюзу ще не передає архів тестів. Оновіть обидві частини одним комплектом.",pulseHistoryNeedTests:"Виконайте щонайменше два тести за близьких умов, щоб почати довгострокове порівняння.",pulseHistoryTests:"ЗБЕРЕЖЕНО ТЕСТІВ",pulseHistoryComparable:"ПОРІВНЮВАНИХ ТЕСТІВ",pulseHistoryBaseline:"БАЗОВЕ ВИМІРЮВАННЯ",pulseHistoryAnomalies:"МОЖЛИВІ АНОМАЛІЇ",pulseHistoryNoComparable:"Збережені вимірювання є, але їхні SOC, температура, струм або кількість комірок надто відрізняються від останнього тесту. Вони зберігаються, але не використовуються як діагностична база.",pulseFromFirst:"ВІД ПЕРШОГО",pulseFromPrevious:"ВІД ПОПЕРЕДНЬОГО",pulseAnomalyCritical:"СИЛЬНЕ ВІДНОСНЕ ЗРОСТАННЯ",pulseAnomalyWarning:"ПЕРЕВІРТЕ ТЕНДЕНЦІЮ",pulseNotComparable:"НЕМАЄ ПОРІВНЯННЯ",pulseHistoryDate:"ДАТА ТЕСТУ",pulseHistoryCondition:"УМОВИ",pulseComparable:"ПОРІВНЮВАНІ",pulseDifferentConditions:"ВІДРІЗНЯЮТЬСЯ",pulseHistoryLimit:"Аномалія означає, що опір комірки зріс швидше за медіану всього пакета за порівнюваних умов. Це привід повторити тест і перевірити контакти, шини та комірку, а не автоматичний діагноз несправності."
 });
 // Only fully translated languages are selectable. This prevents a mixed-language UI.
+Object.assign(ru,{gatewayLinkLost:"Связь с телефоном-шлюзом потеряна (Wi-Fi / сеть)",gatewayLinkRestored:"Связь с телефоном-шлюзом восстановлена (Wi-Fi / сеть)"});
+Object.assign(uk,{gatewayLinkLost:"Зв’язок із телефоном-шлюзом втрачено (Wi-Fi / мережа)",gatewayLinkRestored:"Зв’язок із телефоном-шлюзом відновлено (Wi-Fi / мережа)"});
 const dictionaries: Record<Language, Dictionary> = { en, uk, ru };
 
 export function systemLanguage(): Language {

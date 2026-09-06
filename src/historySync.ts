@@ -144,7 +144,13 @@ export function synchronizeGatewayHistory(baseUrl: string): Promise<{ deviceKey:
 export async function fetchSynchronizedGatewayHistory(baseUrl: string, from: number, to: number, maxPoints: number): Promise<HistoryResponse> {
   try {
     const sync = await synchronizeGatewayHistory(baseUrl);
-    if (sync.supported && sync.deviceKey) return await readCachedHistory(sync.deviceKey, from, to, maxPoints);
+    if (sync.supported && sync.deviceKey) {
+      // Connection loss can be recorded AFTER the newest telemetry point.
+      // Refresh side events to the requested end even when the telemetry cursor has not moved.
+      const sideData = await fetchRemoteGatewayHistory(baseUrl, from, to, 50);
+      await storeHistorySideData(sync.deviceKey, sideData);
+      return await readCachedHistory(sync.deviceKey, from, to, maxPoints);
+    }
   } catch {
     const deviceKey = rememberedDevice(baseUrl);
     if (deviceKey) {

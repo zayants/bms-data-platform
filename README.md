@@ -2,7 +2,7 @@
 
 Read-only monitoring for JK/Jikong BMS. An Android phone works as the Bluetooth gateway and local logger; the Windows dashboard provides a large-screen view, history and diagnostics over the local Wi-Fi network.
 
-**Latest release: 0.7.34** · [Download Android and Windows packages](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.34) · [Connection guide](docs/connection-guide-ru.md)
+**Latest release: 0.7.35** · [Download Android and Windows packages](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.35) · [Connection guide](docs/connection-guide-ru.md)
 
 ![Desktop overview](screenshots/desktop-overview.png)
 
@@ -12,8 +12,8 @@ The phone stays near the battery, maintains the BLE connection, and records tele
 
 ## Included
 
-- **BMS Gateway 0.4.8 (Android 8.0+)** — BMS scanning and manual selection, live telemetry, stable automatic reconnect, up to 32 cells, local history, CSV export, local Wi-Fi API and persistent active-test records.
-- **BMS Data Platform 0.7.34 (Windows x64)** — overview, energy flow, responsive configurable history charts, incremental phone-to-PC history synchronisation and long-term cell diagnostics including controlled two-edge charge-pulse resistance comparisons.
+- **BMS Gateway 0.4.9 (Android 8.0+)** — BMS scanning and manual selection, live telemetry, stable automatic reconnect, up to 32 cells, local history, CSV export, local Wi-Fi API and persistent active-test records.
+- **BMS Data Platform 0.7.35 (Windows x64)** — overview, energy flow, responsive configurable history charts, incremental phone-to-PC history synchronisation and long-term cell diagnostics including controlled two-edge charge-pulse resistance comparisons.
 - Complete English, Ukrainian and Russian interfaces.
 
 ## Screenshots
@@ -44,9 +44,11 @@ Normal monitoring is read-only and never changes BMS protection parameters. A se
 
 ## Downloads
 
-- [Android Gateway 0.4.8 APK](https://github.com/zayants/bms-data-platform/releases/download/v0.7.34/BMS-Gateway-0.4.8-Android.apk)
-- [Windows Monitor 0.7.34 x64](https://github.com/zayants/bms-data-platform/releases/download/v0.7.34/BMS-Data-Platform-0.7.34-Windows-x64.zip)
-- [All release files](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.34)
+New in 0.7.35 / Gateway 0.4.9: real gaps in history curves, separate Bluetooth/network event markers, recorded manual BMS disconnects and a [read-only external monitoring API](docs/MONITORING-API.md). See the [bilingual release notes](release-notes-0.7.35.md).
+
+- [Android Gateway 0.4.9 APK](https://github.com/zayants/bms-data-platform/releases/download/v0.7.35/BMS-Gateway-0.4.9-Android.apk)
+- [Windows Monitor 0.7.35 x64](https://github.com/zayants/bms-data-platform/releases/download/v0.7.35/BMS-Data-Platform-0.7.35-Windows-x64.zip)
+- [All release files](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.35)
 
 ---
 
@@ -54,12 +56,14 @@ Normal monitoring is read-only and never changes BMS protection parameters. A se
 
 **BMS Data Platform** — система мониторинга JK/Jikong BMS только для чтения. Телефон находится рядом с аккумулятором, поддерживает Bluetooth-связь и записывает историю. Компьютер, планшет или телевизор в той же Wi-Fi-сети отображает данные через браузер или Windows-монитор.
 
-**Последняя версия: 0.7.34** · [Скачать APK и Windows-архив](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.34) · [Инструкция по подключению](docs/connection-guide-ru.md)
+**Последняя версия: 0.7.35** · [Скачать APK и Windows-архив](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.35) · [Инструкция по подключению](docs/connection-guide-ru.md)
 
 ### Возможности
 
-- **BMS Gateway 0.4.8 для Android 8.0+** — поиск и ручной выбор BMS, текущие параметры, устойчивое автопереподключение, до 32 ячеек, локальная история, экспорт CSV, локальный Wi-Fi API и постоянное хранение результатов активных тестов.
-- **BMS Data Platform 0.7.34 для Windows x64** — обзор батареи, поток энергии, быстрое переключение масштаба графиков, дозагрузка истории с телефона и долговременная диагностика ячеек, включая контролируемый двухсторонний импульсный тест сопротивления.
+Новое в 0.7.35 / Gateway 0.4.9: разрывы кривых при пропусках данных, отдельные метки Bluetooth/сети, запись ручных отключений BMS и [API внешнего мониторинга только для чтения](docs/MONITORING-API.md). [Описание изменений](release-notes-0.7.35.md).
+
+- **BMS Gateway 0.4.9 для Android 8.0+** — поиск и ручной выбор BMS, текущие параметры, устойчивое автопереподключение, до 32 ячеек, локальная история, экспорт CSV, локальный Wi-Fi API и постоянное хранение результатов активных тестов.
+- **BMS Data Platform 0.7.35 для Windows x64** — обзор батареи, поток энергии, быстрое переключение масштаба графиков, дозагрузка истории с телефона и долговременная диагностика ячеек, включая контролируемый двухсторонний импульсный тест сопротивления.
 - Полностью переведённые интерфейсы: русский, английский и украинский.
 
 ### Подключение
@@ -76,8 +80,8 @@ Normal monitoring is read-only and never changes BMS protection parameters. A se
 
 ### Скачать
 
-- [APK для телефона 0.4.8](https://github.com/zayants/bms-data-platform/releases/download/v0.7.34/BMS-Gateway-0.4.8-Android.apk)
-- [Windows-монитор 0.7.34 x64](https://github.com/zayants/bms-data-platform/releases/download/v0.7.34/BMS-Data-Platform-0.7.34-Windows-x64.zip)
-- [Страница релиза](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.34)
+- [APK для телефона 0.4.9](https://github.com/zayants/bms-data-platform/releases/download/v0.7.35/BMS-Gateway-0.4.9-Android.apk)
+- [Windows-монитор 0.7.35 x64](https://github.com/zayants/bms-data-platform/releases/download/v0.7.35/BMS-Data-Platform-0.7.35-Windows-x64.zip)
+- [Страница релиза](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.35)
 
 Проект находится в публичном тестировании. Если ваша BMS не подключается, сообщите модель, прошивку, имя Bluetooth-устройства и версию Android.
