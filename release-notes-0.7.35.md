@@ -4,6 +4,8 @@
 
 Update both the Windows monitor and Android gateway for the complete connection-history fixes. Install the APK over the existing app; do not uninstall it if you want to keep phone history and settings.
 
+Complete illustrated manuals are attached to this release: [English PDF](https://github.com/zayants/bms-data-platform/releases/download/v0.7.35/BMS_Data_Platform_User_Manual_EN_v0.7.35.pdf) and [Russian PDF](https://github.com/zayants/bms-data-platform/releases/download/v0.7.35/BMS_Data_Platform_User_Manual_RU_v0.7.35.pdf).
+
 - History lines and shaded areas now break across detected telemetry gaps instead of drawing a misleading bridge, including bidirectional current and power charts.
 - Bluetooth loss/restoration and phone-gateway network loss/restoration have separate square icons. Hover for the event time and connection type.
 - Manual BMS disconnection on the phone is recorded; restoration is confirmed by a valid telemetry sample. Previously unrecorded events cannot be recreated retroactively.
@@ -19,6 +21,8 @@ Validation: 58 desktop tests passed, TypeScript and production build passed; And
 ## Русский
 
 Для полного исправления истории соединений обновите и Windows-монитор, и телефон-шлюз. Устанавливайте APK поверх приложения: не удаляйте его, чтобы сохранить историю и настройки телефона.
+
+К релизу приложены полные иллюстрированные руководства: [на русском языке](https://github.com/zayants/bms-data-platform/releases/download/v0.7.35/BMS_Data_Platform_User_Manual_RU_v0.7.35.pdf) и [на английском языке](https://github.com/zayants/bms-data-platform/releases/download/v0.7.35/BMS_Data_Platform_User_Manual_EN_v0.7.35.pdf).
 
 - Линии и заливки графиков разрываются при обнаруженных пропусках измерений, без выдуманной прямой между ними. Это относится и к двунаправленным графикам тока и мощности.
 - Потеря/восстановление Bluetooth и недоступность/восстановление телефона по сети отмечаются разными квадратными значками. При наведении доступны время и тип события.
