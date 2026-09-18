@@ -2,7 +2,7 @@
 
 Read-only monitoring for JK/Jikong BMS. An Android phone works as the Bluetooth gateway and local logger; the Windows dashboard provides a large-screen view, history and diagnostics over the local Wi-Fi network.
 
-**Latest release: 0.7.35** · [Download Android and Windows packages](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.35) · [Connection guide](docs/connection-guide-ru.md)
+**Latest release: 0.7.35** · [Download APK and Windows package](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.35) · [English user manual (PDF)](docs/manuals/BMS_Data_Platform_User_Manual_EN_v0.7.35.pdf) · [Русское руководство (PDF)](docs/manuals/BMS_Data_Platform_User_Manual_RU_v0.7.35.pdf)
 
 ![Desktop overview](screenshots/desktop-overview.png)
 
@@ -48,6 +48,8 @@ New in 0.7.35 / Gateway 0.4.9: real gaps in history curves, separate Bluetooth/n
 
 - [Android Gateway 0.4.9 APK](https://github.com/zayants/bms-data-platform/releases/download/v0.7.35/BMS-Gateway-0.4.9-Android.apk)
 - [Windows Monitor 0.7.35 x64](https://github.com/zayants/bms-data-platform/releases/download/v0.7.35/BMS-Data-Platform-0.7.35-Windows-x64.zip)
+- [English user manual (PDF)](docs/manuals/BMS_Data_Platform_User_Manual_EN_v0.7.35.pdf)
+- [Russian user manual (PDF)](docs/manuals/BMS_Data_Platform_User_Manual_RU_v0.7.35.pdf)
 - [All release files](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.35)
 
 ---
@@ -56,7 +58,7 @@ New in 0.7.35 / Gateway 0.4.9: real gaps in history curves, separate Bluetooth/n
 
 **BMS Data Platform** — система мониторинга JK/Jikong BMS только для чтения. Телефон находится рядом с аккумулятором, поддерживает Bluetooth-связь и записывает историю. Компьютер, планшет или телевизор в той же Wi-Fi-сети отображает данные через браузер или Windows-монитор.
 
-**Последняя версия: 0.7.35** · [Скачать APK и Windows-архив](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.35) · [Инструкция по подключению](docs/connection-guide-ru.md)
+**Последняя версия: 0.7.35** · [Скачать APK и Windows-архив](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.35) · [Полное руководство на русском (PDF)](docs/manuals/BMS_Data_Platform_User_Manual_RU_v0.7.35.pdf) · [English manual (PDF)](docs/manuals/BMS_Data_Platform_User_Manual_EN_v0.7.35.pdf)
 
 ### Возможности
 
@@ -82,6 +84,8 @@ New in 0.7.35 / Gateway 0.4.9: real gaps in history curves, separate Bluetooth/n
 
 - [APK для телефона 0.4.9](https://github.com/zayants/bms-data-platform/releases/download/v0.7.35/BMS-Gateway-0.4.9-Android.apk)
 - [Windows-монитор 0.7.35 x64](https://github.com/zayants/bms-data-platform/releases/download/v0.7.35/BMS-Data-Platform-0.7.35-Windows-x64.zip)
+- [Полное руководство на русском (PDF)](docs/manuals/BMS_Data_Platform_User_Manual_RU_v0.7.35.pdf)
+- [Полное руководство на английском (PDF)](docs/manuals/BMS_Data_Platform_User_Manual_EN_v0.7.35.pdf)
 - [Страница релиза](https://github.com/zayants/bms-data-platform/releases/tag/v0.7.35)
 
 Проект находится в публичном тестировании. Если ваша BMS не подключается, сообщите модель, прошивку, имя Bluetooth-устройства и версию Android.
