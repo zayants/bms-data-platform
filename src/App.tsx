@@ -3,7 +3,7 @@ import QRCode from "qrcode";
 import {
   Activity, AlertTriangle, BatteryCharging, BatteryMedium, BrainCircuit, Cable, CheckCircle2,
   ChartNoAxesCombined, Clock3, Gauge, Languages, LayoutDashboard, ListTree, Maximize2, Minimize2,
-  Download, EyeOff, Microscope, Moon, PlugZap, Radio, RefreshCw, ScanSearch, Settings2, ShieldCheck, SlidersHorizontal, Smartphone, Sun, Thermometer, Unplug, Waves, Zap,
+  Database, Download, EyeOff, Microscope, Moon, Pencil, PlugZap, Radio, RefreshCw, ScanSearch, Settings2, ShieldCheck, SlidersHorizontal, Smartphone, Sun, Thermometer, Trash2, Unplug, Waves, Zap,
 } from "lucide-react";
 import {
   calculateCellStats,
@@ -21,13 +21,13 @@ import { calculateSocEventCellStats, inferSocBoundaryEvents } from "./historyDia
 import { calculateBalanceDiagnostics, type BalanceDiagnostics } from "./balanceDiagnostics";
 import { analyzeCellCapacity, type CellCapacityAnalysis, type EstimateConfidence } from "./cellCapacityEstimate";
 import { classifyCell, type CellVisualStatus } from "./cellStatus";
-import { exportHistoryWorkbook, type HistoryExportLabels } from "./historyExcelExport";
+import { exportHistoryWorkbook, exportMultipleHistoryWorkbooks, type HistoryExportLabels } from "./historyExcelExport";
 import { cellVoltageAxisRange, packVoltageAxisRange, type VoltageAxisRange } from "./voltageAxis";
-import { alarmCount, isPasswordReminderAlarm, passwordReminder, unknownAlarmMask } from "./alarmState";
+import { actionableAlarmMask, alarmCount, isPasswordReminderAlarm, passwordReminder, unknownAlarmMask } from "./alarmState";
 import { DischargeCurrentDistributionPanel } from "./DischargeCurrentDistributionPanel";
 import { OperatingPointCellComparisonPanel } from "./OperatingPointCellComparisonPanel";
 import { subscribeHistorySync, type HistorySyncState } from "./historySync";
-import { exportHistoryDatabaseSql } from "./historyCache";
+import { deleteCachedBattery, exportHistoryDatabaseSql, listCacheMeta, readCachedHistory, type HistoryCacheMeta } from "./historyCache";
 import { GATEWAY_COMPATIBILITY_ID, type GatewayCompatibilityIssue } from "./apiCompatibility";
 import { comparePulseResistanceTests, pulseTestsComparable } from "./pulseResistanceDiagnostics";
 import { historyPaths, historyContinuity } from "./historyGaps";
@@ -38,7 +38,7 @@ const makeId = () => typeof crypto !== "undefined" && typeof crypto.randomUUID =
 import type { ChargeSessionRecord, ConnectionHistoryEvent, ConnectionState, GatewaySnapshot, HistoryPoint, HistoryResponse, MonitorEvent, PulseResistanceTestResult, PulseResistanceTestStatus, SocBoundaryEvent } from "./types";
 import { loadChartSettings, saveChartSettings, THRESHOLD_BOUNDS, thresholdValidationIssue, validThresholdLimits, type BmsThresholdId, type ChartDisplaySettings, type HistorySectionVisibility, type IndividualChartMetric, type ThresholdMetric } from "./chartSettings";
 
-type Page = "overview" | "history" | "functions" | "events" | "connection" | "settings";
+type Page = "overview" | "batteries" | "history" | "functions" | "events" | "connection" | "settings";
 type AppTheme = "light" | "dark";
 type IconType = typeof Activity;
 type DiagnosticSettings = { showAdvanced: boolean; showGattCodes: boolean };
@@ -48,6 +48,8 @@ function loadDiagnosticSettings(): DiagnosticSettings { try { const value=JSON.p
 
 const DEFAULT_GATEWAY = "http://192.168.0.188:8765";
 const MONITOR_EVENTS_STORAGE_KEY = "bms-monitor-events-v1";
+const KNOWN_BATTERIES_STORAGE_KEY = "bms-known-batteries-v1";
+const HISTORY_SELECTED_BATTERY_KEY = "bms-history-selected-battery-v1";
 const HISTORY_SYNC_BANNER_DELAY_MS = 5_000;
 function loadMonitorEvents(): MonitorEvent[] {
   try {
@@ -107,6 +109,7 @@ function App() {
   const [diagnosticSettings,setDiagnosticSettings]=useState<DiagnosticSettings>(loadDiagnosticSettings);
   const [historySync,setHistorySync]=useState<HistorySyncState>({status:"idle",deviceKey:"",deviceName:"",downloadedRecords:0,phoneRecordCount:0,cachedFrom:null,cachedTo:null});
   const [showHistorySyncBanner,setShowHistorySyncBanner]=useState(false);
+  const [newBatteryAddress,setNewBatteryAddress]=useState("");
   const historySyncStartedAt=useRef<number | null>(null);
   const previousOnline = useRef<boolean | null>(null);
   const hasConnectedOnce = useRef(false);
@@ -123,6 +126,20 @@ function App() {
   useEffect(()=>localStorage.setItem("bms-app-theme",theme),[theme]);
   useEffect(()=>localStorage.setItem(MONITOR_EVENTS_STORAGE_KEY,JSON.stringify(events)),[events]);
   useEffect(()=>subscribeHistorySync(setHistorySync),[]);
+  useEffect(()=>{
+    const address=snapshot?.deviceAddress?.trim().toUpperCase();
+    if(!address||!snapshot?.connected)return;
+    let known:string[]=[];
+    try{const stored=JSON.parse(localStorage.getItem(KNOWN_BATTERIES_STORAGE_KEY)??"[]");if(Array.isArray(stored))known=stored.filter((item):item is string=>typeof item==="string");}catch{/* start with an empty known-device list */}
+    if(!known.includes(address))setNewBatteryAddress(address);
+  },[snapshot?.deviceAddress,snapshot?.connected]);
+  const acknowledgeNewBattery=()=>{
+    if(!newBatteryAddress)return;
+    let known:string[]=[];
+    try{const stored=JSON.parse(localStorage.getItem(KNOWN_BATTERIES_STORAGE_KEY)??"[]");if(Array.isArray(stored))known=stored.filter((item):item is string=>typeof item==="string");}catch{/* replace invalid local data */}
+    localStorage.setItem(KNOWN_BATTERIES_STORAGE_KEY,JSON.stringify([...new Set([...known,newBatteryAddress])]));
+    setNewBatteryAddress("");
+  };
   useEffect(()=>{
     const isActive=historySync.status==="checking"||historySync.status==="initial"||historySync.status==="incremental";
     const requiresImmediateAttention=historySync.status==="error"||historySync.status==="unsupported";
@@ -222,7 +239,7 @@ function App() {
   const cellStats = calculateCellStats(cells);
 
   const nav: Array<[Page, IconType, string]> = [
-    ["overview", LayoutDashboard, t("overview")], ["history", ChartNoAxesCombined, t("history")],
+    ["overview", LayoutDashboard, t("overview")], ["batteries", BatteryMedium, t("batteryProfiles")], ["history", ChartNoAxesCombined, t("history")],
     ["functions", BrainCircuit, t("functions")],
     ["events", ListTree, t("events")], ["connection", Settings2, t("connection")],
     ["settings", SlidersHorizontal, t("settings")],
@@ -241,11 +258,13 @@ function App() {
         <div className={`live-pill ${connectionState}`}><span className="pulse"/>{stateLabel}<small>{snapshot?.ageMs != null ? `${Math.round(snapshot.ageMs / 100) / 10}s` : "—"}</small></div>
       </header>
       {connectionState !== "live" && (snapshot || historySync.deviceKey) && <StaleDataBanner t={t}/>}
+      {newBatteryAddress&&<section className="new-battery-banner" role="status"><BatteryMedium/><div><strong>{t("newBatteryDetected")}</strong><span>{snapshot?.deviceName||"JK BMS"} · {newBatteryAddress}</span><small>{t("newBatteryDetectedHint")}</small></div><button type="button" onClick={acknowledgeNewBattery}>{t("understood")}</button></section>}
       {!compatibilityIssue&&showHistorySyncBanner&&historySync.status!=="idle"&&historySync.status!=="complete"&&<HistorySyncBanner state={historySync} t={t}/>}
 
       {compatibilityIssue && page === "connection" && <CompatibilityBlock issue={compatibilityIssue} t={t}/>}
       {compatibilityIssue && page !== "connection" ? <CompatibilityBlock issue={compatibilityIssue} t={t} onOpenConnection={()=>setPage("connection")}/> : <>
         {page === "overview" && <Overview snapshot={snapshot} t={t} cellStats={cellStats}/>}
+        {page === "batteries" && <BatteryProfilesPage snapshot={snapshot} t={t} language={language} onOpenHistory={(deviceKey)=>{localStorage.setItem(HISTORY_SELECTED_BATTERY_KEY,deviceKey);setPage("history");}}/>}
         {page === "history" && <HistoryPage gatewayUrl={gatewayUrl} gatewayEvents={events} t={t} language={language} snapshot={snapshot} cellStats={cellStats} chartSettings={chartSettings} setChartSettings={setChartSettings}/>}
         {page === "functions" && <FunctionsPage t={t} diagnosticSettings={diagnosticSettings} setDiagnosticSettings={setDiagnosticSettings} gatewayUrl={gatewayUrl} snapshot={snapshot}/>}
         {page === "events" && <EventsPage events={events} chargeSessions={chargeSessions} snapshot={snapshot} t={t} acknowledgedAlarmKey={acknowledgedAlarmKey} onAcknowledge={(key)=>setAcknowledgedAlarmKey(key)} onClearEvents={()=>setEvents([])} onClearChargeSessions={()=>{const now=Date.now();localStorage.setItem("bms-charge-sessions-reset-at",String(now));setChargeSessionsResetAt(now);}}/>}
@@ -418,7 +437,7 @@ function splitSignedPaths<T extends {timestamp:number}>(points: T[], value: (poi
 
 function SignedColorInputs({series,t,onChange}:{series:HistorySeries;t:ReturnType<typeof translator>;onChange:(direction:keyof DirectionalColors,color:string)=>void}) {
   if (!series.directionalColors) return null;
-  return <span className="signed-color-controls"><label title={`${t("charging")}: ${t("curveColor")}`}><b>+</b><input type="color" value={series.directionalColors!.positive} aria-label={`${t("charging")}: ${t("curveColor")} · ${series.title}`} onChange={(event)=>onChange("positive",event.target.value)}/></label><label title={`${t("discharging")}: ${t("curveColor")}`}><b>−</b><input type="color" value={series.directionalColors!.negative} aria-label={`${t("discharging")}: ${t("curveColor")} · ${series.title}`} onChange={(event)=>onChange("negative",event.target.value)}/></label></span>;
+  return <span className="signed-color-controls"><label title={`${t("charging")} (+): ${t("curveColor")}`}><b aria-hidden="true">+</b><input type="color" value={series.directionalColors!.positive} aria-label={`${t("charging")} (+): ${t("curveColor")} · ${series.title}`} onChange={(event)=>onChange("positive",event.target.value)}/></label><label title={`${t("discharging")} (−): ${t("curveColor")}`}><b aria-hidden="true">−</b><input type="color" value={series.directionalColors!.negative} aria-label={`${t("discharging")} (−): ${t("curveColor")} · ${series.title}`} onChange={(event)=>onChange("negative",event.target.value)}/></label></span>;
 }
 
 type TimeViewport = {
@@ -450,6 +469,8 @@ type ChartThreshold = {
   description?:string;
   lineType?:string;
   color?:string;
+  sourceLabel?:string;
+  outsideScaleLabel?:string;
 };
 
 type BmsThresholdReference = { id?:BmsThresholdId; label:string; value:number; unit:string };
@@ -506,7 +527,7 @@ function chartThresholds(settings:ChartDisplaySettings,snapshot:GatewaySnapshot|
       if(limits.high!=null)result.push({id:`custom-${metric}-high`,metric,value:limits.high,label:`${t("customThreshold")} · ${t("upperThreshold")}`,description:t("customUpperThresholdHint"),lineType:t("thresholdLegendLine"),color:settings.customThresholdColors[metric].high,source:"custom",level:"critical"});
     }
   }
-  return result;
+  return result.map((threshold)=>({...threshold,sourceLabel:threshold.source==="bms"?"BMS":t("customThreshold"),outsideScaleLabel:t("thresholdOutsideScale")}));
 }
 
 function FunctionsPage({t,diagnosticSettings,setDiagnosticSettings,gatewayUrl,snapshot}:{t:ReturnType<typeof translator>;diagnosticSettings:DiagnosticSettings;setDiagnosticSettings:(value:DiagnosticSettings)=>void;gatewayUrl:string;snapshot:GatewaySnapshot|null}) {
@@ -683,7 +704,7 @@ function ThresholdLines({thresholds,y,left,right,unit,decimals,showLabels,valueA
   const dragging=useRef<ChartThreshold|null>(null);
   const pointerValue=(event:ReactPointerEvent<SVGGElement>)=>{const svg=event.currentTarget.ownerSVGElement;if(!svg||!valueAtY)return null;const box=svg.getBoundingClientRect();return valueAtY((event.clientY-box.top)/box.height*svg.viewBox.baseVal.height);};
   const round=(value:number)=>step?Math.round(value/step)*step:value;
-  return <>{thresholds.map((threshold)=>{const rawLineY=y(threshold.value);const lineY=clampY?Math.max(clampY.top,Math.min(clampY.bottom,rawLineY)):rawLineY;const value=`${threshold.value.toFixed(decimals)} ${unit}`;const markerX=left+5;const lineStart=left+24;const color=threshold.color;const editable=threshold.source==="custom"&&Boolean(onAdjust&&valueAtY);const clipped=rawLineY!==lineY;const tooltip=[threshold.label,value,threshold.source==="bms"?"BMS":"Custom",clipped?"outside the current scale":null,threshold.description].filter(Boolean).join(" · ");const update=(event:ReactPointerEvent<SVGGElement>)=>{const next=pointerValue(event);if(next!=null)onAdjust?.(threshold,round(next));};return <g className={`threshold-line ${threshold.source} ${threshold.level} ${editable?"editable":""} ${clipped?"clamped":""}`} key={threshold.id} onPointerDown={editable?(event)=>{dragging.current=threshold;event.currentTarget.setPointerCapture(event.pointerId);update(event);}:undefined} onPointerMove={editable?(event)=>{if(dragging.current?.id===threshold.id)update(event);}:undefined} onPointerUp={editable?()=>{dragging.current=null;}:undefined} onPointerCancel={editable?()=>{dragging.current=null;}:undefined} onWheel={editable?(event)=>{event.preventDefault();onAdjust?.(threshold,round(threshold.value+(event.deltaY<0?(step??1):-(step??1))));}:undefined}>{showLabels&&<title>{tooltip}</title>}<line x1={lineStart} x2={right} y1={lineY} y2={lineY} style={{stroke:color}}/><rect className="threshold-line-marker-frame" x={markerX-2} y={lineY-8} width="16" height="16" rx="3"/><rect className="threshold-line-marker" x={markerX} y={lineY-6} width="12" height="12" rx="2" style={{fill:color}}/><text className="threshold-line-marker-label" x={markerX+6} y={lineY+3} textAnchor="middle">{threshold.source==="bms"?"B":"U"}</text></g>;})}</>;
+  return <>{thresholds.map((threshold)=>{const rawLineY=y(threshold.value);const lineY=clampY?Math.max(clampY.top,Math.min(clampY.bottom,rawLineY)):rawLineY;const value=`${threshold.value.toFixed(decimals)} ${unit}`;const markerX=left+5;const lineStart=left+24;const color=threshold.color;const editable=threshold.source==="custom"&&Boolean(onAdjust&&valueAtY);const clipped=rawLineY!==lineY;const tooltip=[threshold.label,value,threshold.sourceLabel,clipped?threshold.outsideScaleLabel:null,threshold.description].filter(Boolean).join(" · ");const update=(event:ReactPointerEvent<SVGGElement>)=>{const next=pointerValue(event);if(next!=null)onAdjust?.(threshold,round(next));};return <g className={`threshold-line ${threshold.source} ${threshold.level} ${editable?"editable":""} ${clipped?"clamped":""}`} key={threshold.id} onPointerDown={editable?(event)=>{dragging.current=threshold;event.currentTarget.setPointerCapture(event.pointerId);update(event);}:undefined} onPointerMove={editable?(event)=>{if(dragging.current?.id===threshold.id)update(event);}:undefined} onPointerUp={editable?()=>{dragging.current=null;}:undefined} onPointerCancel={editable?()=>{dragging.current=null;}:undefined} onWheel={editable?(event)=>{event.preventDefault();onAdjust?.(threshold,round(threshold.value+(event.deltaY<0?(step??1):-(step??1))));}:undefined}>{showLabels&&<title>{tooltip}</title>}<line x1={lineStart} x2={right} y1={lineY} y2={lineY} style={{stroke:color}}/><rect className="threshold-line-marker-frame" x={markerX-2} y={lineY-8} width="16" height="16" rx="3"/><rect className="threshold-line-marker" x={markerX} y={lineY-6} width="12" height="12" rx="2" style={{fill:color}}/><text className="threshold-line-marker-label" x={markerX+6} y={lineY+3} textAnchor="middle">{threshold.source==="bms"?"B":"U"}</text></g>;})}</>;
 }
 
 function adjustCustomThreshold(settings:ChartDisplaySettings,setSettings:(settings:ChartDisplaySettings)=>void,threshold:ChartThreshold,value:number){
@@ -739,6 +760,55 @@ function historyPointLimit(period: HistoryPeriod): number {
 
 const HistoryRangeStatus = React.createContext("");
 const HistoryEventWindow = React.createContext({from:0,to:0});
+const BATTERY_ALIASES_KEY="bms-battery-aliases-v1";
+function loadBatteryAliases():Record<string,string>{try{return JSON.parse(localStorage.getItem(BATTERY_ALIASES_KEY)??"{}");}catch{return {};}}
+function batteryDisplayName(profile:HistoryCacheMeta,aliases:Record<string,string>):string{return aliases[profile.deviceKey]?.trim()||profile.deviceName||profile.deviceKey;}
+type BatteryProfileSummary={profile:HistoryCacheMeta;latest:HistoryPoint|null};
+function BatteryProfilesPage({snapshot,t,language,onOpenHistory}:{snapshot:GatewaySnapshot|null;t:ReturnType<typeof translator>;language:Language;onOpenHistory:(deviceKey:string)=>void}){
+  const [items,setItems]=useState<BatteryProfileSummary[]>([]);
+  const [aliases,setAliases]=useState<Record<string,string>>(loadBatteryAliases);
+  const [loading,setLoading]=useState(true);
+  const currentKey=snapshot?.deviceAddress?.trim().toUpperCase()??"";
+  const load=async()=>{
+    setLoading(true);
+    try{
+      const profiles=await listCacheMeta();
+      const summaries=await Promise.all(profiles.map(async(profile)=>{
+        const to=profile.coverage.at(-1)?.to??profile.phoneNewestTimestamp??Date.now();
+        const oldest=profile.coverage[0]?.from??profile.phoneOldestTimestamp??Math.max(0,to-24*60*60_000);
+        const from=Math.max(oldest,to-24*60*60_000);
+        const history=await readCachedHistory(profile.deviceKey,from,to,50);
+        return {profile,latest:history.points.at(-1)??null};
+      }));
+      setItems(summaries);
+    }finally{setLoading(false);}
+  };
+  useEffect(()=>{void load();const updated=()=>void load();window.addEventListener("bms-history-cache-updated",updated);return()=>window.removeEventListener("bms-history-cache-updated",updated);},[]);
+  const rename=(item:BatteryProfileSummary)=>{
+    const next=window.prompt(t("batteryRenamePrompt"),batteryDisplayName(item.profile,aliases))?.trim();
+    if(next==null)return;
+    const updated={...aliases};if(next)updated[item.profile.deviceKey]=next;else delete updated[item.profile.deviceKey];
+    setAliases(updated);localStorage.setItem(BATTERY_ALIASES_KEY,JSON.stringify(updated));window.dispatchEvent(new Event("bms-battery-aliases-updated"));
+  };
+  const remove=async(item:BatteryProfileSummary)=>{
+    const name=batteryDisplayName(item.profile,aliases);
+    if(!window.confirm(t("deleteBatteryConfirm").replace("{name}",name)))return;
+    await deleteCachedBattery(item.profile.deviceKey);
+    const updated={...aliases};delete updated[item.profile.deviceKey];setAliases(updated);localStorage.setItem(BATTERY_ALIASES_KEY,JSON.stringify(updated));
+    try{const known:string[]=JSON.parse(localStorage.getItem(KNOWN_BATTERIES_STORAGE_KEY)??"[]");localStorage.setItem(KNOWN_BATTERIES_STORAGE_KEY,JSON.stringify(known.filter((key)=>key!==item.profile.deviceKey)));}catch{/* ignore invalid convenience data */}
+    await load();
+  };
+  return <div className="page-content battery-profiles-page">
+    <section className="panel battery-fleet-header"><div><div className="eyebrow">{t("batteryFleetEyebrow")}</div><h2>{t("batteryProfilesTitle")}</h2><p>{t("batteryProfilesHint")}</p></div><div className="battery-fleet-count"><BatteryMedium/><strong>{items.length}</strong><span>{t("savedProfiles")}</span></div></section>
+    {loading?<div className="empty-state"><RefreshCw className="spin"/><span>{t("loadingHistory")}</span></div>:items.length===0?<div className="empty-state"><Database/><span>{t("noBatteryProfiles")}</span></div>:<section className="battery-profile-grid">{items.map((item)=>{
+      const {profile,latest}=item;const isCurrent=profile.deviceKey===currentKey;const isActive=isCurrent&&snapshot?.connected===true;const lastSeen=latest?.timestamp??profile.phoneNewestTimestamp;const chemistry=profile.chemistry||(isCurrent?snapshot?.chemistry:null);const cellCount=profile.cellCount??latest?.cellsV?.length??(isCurrent?snapshot?.cellsV?.length:null);const activeAlarmMask=actionableAlarmMask(latest?.alarmMask);const alarm=activeAlarmMask!==0;return <article className={`panel battery-profile-card ${isActive?"current":""}`} key={profile.deviceKey}>
+        <header><div><small>{isActive?t("currentBattery"):t("savedBatteryHistory")}</small><h3>{batteryDisplayName(profile,aliases)}</h3><code>{profile.deviceKey}</code></div><span className={`battery-profile-state ${isActive?"live":"archive"}`}>{isActive?t("live"):t("archive")}</span></header>
+        <div className="battery-profile-specs"><span><small>{t("chemistry")}</small><strong>{chemistry||"—"}</strong></span><span><small>{t("cellCount")}</small><strong>{cellCount??"—"}</strong></span><span><small>{t("historyRecords")}</small><strong>{profile.recordCount?.toLocaleString(language)??"—"}</strong></span><span><small>{t("lastData")}</small><strong>{lastSeen?new Date(lastSeen).toLocaleString(language):"—"}</strong></span></div>
+        <div className="battery-compare-values"><span><small>SOC</small><strong>{latest?`${latest.socPercent.toFixed(0)}%`:"—"}</strong></span><span><small>{t("voltage")}</small><strong>{latest?`${latest.packVoltageV.toFixed(2)} V`:"—"}</strong></span><span><small>{t("current")}</small><strong>{latest?`${latest.currentA>=0?"+":""}${latest.currentA.toFixed(1)} A`:"—"}</strong></span><span><small>{t("temp")}</small><strong>{latest?`${latest.temperatureC.toFixed(1)} °C`:"—"}</strong></span><span><small>{t("imbalance")}</small><strong>{latest?`${latest.deltaMv.toFixed(0)} mV`:"—"}</strong></span><span className={alarm?"alarm":""}><small>{t("alarms")}</small><strong>{latest?alarm?`0x${activeAlarmMask.toString(16).toUpperCase()}`:t("normal"):"—"}</strong></span></div>
+        <footer><button type="button" onClick={()=>onOpenHistory(profile.deviceKey)}><ChartNoAxesCombined/>{t("openBatteryHistory")}</button><button type="button" onClick={()=>rename(item)}><Pencil/>{t("renameBattery")}</button><button type="button" className="danger" disabled={isActive} title={isActive?t("cannotDeleteCurrentBattery"):t("deleteLocalHistory")} onClick={()=>void remove(item)}><Trash2/>{t("deleteLocalHistory")}</button></footer>
+      </article>;})}</section>}
+  </div>;
+}
 function HistoryPage({gatewayUrl,gatewayEvents,t,language,snapshot,cellStats,chartSettings,setChartSettings}:{gatewayUrl:string;gatewayEvents:MonitorEvent[];t:ReturnType<typeof translator>;language:Language;snapshot:GatewaySnapshot|null;cellStats:ReturnType<typeof calculateCellStats>;chartSettings:ChartDisplaySettings;setChartSettings:(settings:ChartDisplaySettings)=>void}) {
   const [period, setPeriod] = useState<HistoryPeriod>(() => {
     const saved = localStorage.getItem("bms-history-period") as HistoryPeriod | null;
@@ -755,16 +825,52 @@ function HistoryPage({gatewayUrl,gatewayEvents,t,language,snapshot,cellStats,cha
   const [refreshToken, setRefreshToken] = useState(0);
   const [timeZoom, setTimeZoom] = useState<{from:number;to:number}|null>(null);
   const [dragSelection,setDragSelection]=useState<DragZoomSelection|null>(null);
+  const [batteryProfiles,setBatteryProfiles]=useState<HistoryCacheMeta[]>([]);
+  const [selectedBatteryKey,setSelectedBatteryKey]=useState(()=>localStorage.getItem(HISTORY_SELECTED_BATTERY_KEY)??"");
+  const [batteryAliases,setBatteryAliases]=useState<Record<string,string>>(loadBatteryAliases);
+  const currentBatteryKey=snapshot?.deviceAddress?.trim().toUpperCase()??"";
+  const previousCurrentBatteryKey=useRef(currentBatteryKey);
+  const viewingCurrentBattery=!selectedBatteryKey||selectedBatteryKey===currentBatteryKey;
+  const selectedBattery=batteryProfiles.find((profile)=>profile.deviceKey===selectedBatteryKey)??null;
+  const batteryName=(profile:HistoryCacheMeta)=>batteryDisplayName(profile,batteryAliases);
   const autoRefreshInterval = period === "year" ? 60_000 : 15_000;
   const historyRequest = useRef(0);
   const historyBusy = useRef(false);
+  useEffect(()=>{
+    let active=true;
+    const load=()=>listCacheMeta().then((profiles)=>{if(active)setBatteryProfiles(profiles);}).catch(()=>{});
+    void load();
+    const updated=()=>void load();
+    const aliasesUpdated=()=>setBatteryAliases(loadBatteryAliases());
+    window.addEventListener("bms-history-cache-updated",updated);
+    window.addEventListener("bms-battery-aliases-updated",aliasesUpdated);
+    return()=>{active=false;window.removeEventListener("bms-history-cache-updated",updated);window.removeEventListener("bms-battery-aliases-updated",aliasesUpdated);};
+  },[]);
+  useEffect(()=>{
+    if(currentBatteryKey&&previousCurrentBatteryKey.current&&currentBatteryKey!==previousCurrentBatteryKey.current){
+      setSelectedBatteryKey(currentBatteryKey);
+    } else if(!selectedBatteryKey){
+      if(currentBatteryKey)setSelectedBatteryKey(currentBatteryKey);
+      else if(batteryProfiles.length)setSelectedBatteryKey(batteryProfiles[0].deviceKey);
+    }
+    if(currentBatteryKey)previousCurrentBatteryKey.current=currentBatteryKey;
+  },[currentBatteryKey,batteryProfiles,selectedBatteryKey]);
+  const renameSelectedBattery=()=>{
+    if(!selectedBatteryKey)return;
+    const profile=batteryProfiles.find((item)=>item.deviceKey===selectedBatteryKey);
+    const next=window.prompt(t("batteryRenamePrompt"),profile?batteryName(profile):selectedBatteryKey)?.trim();
+    if(next==null)return;
+    const aliases={...batteryAliases};
+    if(next)aliases[selectedBatteryKey]=next;else delete aliases[selectedBatteryKey];
+    setBatteryAliases(aliases);localStorage.setItem(BATTERY_ALIASES_KEY,JSON.stringify(aliases));window.dispatchEvent(new Event("bms-battery-aliases-updated"));
+  };
   useEffect(()=>{
     const timer=window.setInterval(()=>{if(!historyBusy.current)setRefreshToken(n=>n+1);},autoRefreshInterval);
     return ()=>window.clearInterval(timer);
   },[autoRefreshInterval]);
   const connectionEvents:ConnectionHistoryEvent[] = [
     ...(history?.connectionEvents??[]),
-    ...gatewayEvents.filter(e=>(e.kind==="lost"||e.kind==="restored")&&normalizeGatewayUrl(e.details)===normalizeGatewayUrl(gatewayUrl))
+    ...gatewayEvents.filter(e=>viewingCurrentBattery&&(e.kind==="lost"||e.kind==="restored")&&normalizeGatewayUrl(e.details)===normalizeGatewayUrl(gatewayUrl))
       .map(e=>({timestamp:e.timestamp,type:e.kind==="lost"?"LOST" as const:"RESTORED" as const,durationMs:null,bmsName:"",source:"gateway" as const})),
   ];
 
@@ -776,7 +882,10 @@ function HistoryPage({gatewayUrl,gatewayEvents,t,language,snapshot,cellStats,cha
     const to = Date.now();
     setLoading(true);
     setError(false);
-    fetchGatewayHistory(gatewayUrl, to - duration, to, historyPointLimit(period))
+    const request=selectedBatteryKey&&!viewingCurrentBattery
+      ?readCachedHistory(selectedBatteryKey,to-duration,to,historyPointLimit(period))
+      :fetchGatewayHistory(gatewayUrl, to - duration, to, historyPointLimit(period));
+    request
       .then((result) => { if (active) {
         setRangeEmpty(result.points.length === 0);
         // Removing a fullscreen panel also exits browser fullscreen.
@@ -785,9 +894,11 @@ function HistoryPage({gatewayUrl,gatewayEvents,t,language,snapshot,cellStats,cha
       .catch(() => { if (active) setError(true); })
       .finally(() => { if(requestId===historyRequest.current)historyBusy.current=false; if (active) { setLoading(false); setRangePending(false); } });
     return () => { active = false; };
-  }, [gatewayUrl, period, refreshToken]);
+  }, [gatewayUrl, period, refreshToken, selectedBatteryKey, viewingCurrentBattery]);
 
-  useEffect(() => setTimeZoom(null), [gatewayUrl, period]);
+  useEffect(() => setTimeZoom(null), [gatewayUrl, period, selectedBatteryKey]);
+  useEffect(()=>{if(selectedBatteryKey)localStorage.setItem(HISTORY_SELECTED_BATTERY_KEY,selectedBatteryKey);},[selectedBatteryKey]);
+  useEffect(()=>{setHistory(null);setRangeEmpty(false);},[selectedBatteryKey]);
   useEffect(()=>{const resetAfterFullscreen=()=>{if(!document.fullscreenElement)setTimeZoom(null);};document.addEventListener("fullscreenchange",resetAfterFullscreen);return()=>document.removeEventListener("fullscreenchange",resetAfterFullscreen);},[]);
 
   useEffect(() => {
@@ -821,10 +932,11 @@ function HistoryPage({gatewayUrl,gatewayEvents,t,language,snapshot,cellStats,cha
   },[sourcePoints,timeZoom]);
   const selectedSeries = selectedMetrics.map((id) => series.find((item) => item.id === id)).filter((item): item is HistorySeries => Boolean(item));
   const visibleIndividualSeries = series.filter((item) => chartSettings.individualChartVisibility[item.id]);
-  const thresholds=chartThresholds(chartSettings,snapshot,t);
+  const historySnapshot=viewingCurrentBattery?snapshot:null;
+  const thresholds=chartThresholds(chartSettings,historySnapshot,t);
   const socBoundaryEvents=history?.socEvents?.length?history.socEvents:inferSocBoundaryEvents(points);
-  const voltageCellCount=Math.max(snapshot?.cellsV?.length??0,...points.map((point)=>point.cellsV?.length??0));
-  const packVoltageRange=packVoltageAxisRange(snapshot?.chemistry,snapshot?.protectionSettings,voltageCellCount,[...points.map((point)=>point.packVoltageV),...thresholds.filter((threshold)=>threshold.metric==="packVoltageV").map((threshold)=>threshold.value)]);
+  const voltageCellCount=Math.max(historySnapshot?.cellsV?.length??0,...points.map((point)=>point.cellsV?.length??0));
+  const packVoltageRange=packVoltageAxisRange(historySnapshot?.chemistry,historySnapshot?.protectionSettings,voltageCellCount,[...points.map((point)=>point.packVoltageV),...thresholds.filter((threshold)=>threshold.metric==="packVoltageV").map((threshold)=>threshold.value)]);
   const addMetric = (id: HistoryMetric) => setSelectedMetrics((current) => current.includes(id) ? current : [...current, id]);
   const removeMetric = (id: HistoryMetric) => setSelectedMetrics((current) => current.filter((metric) => metric !== id));
   const toggleMetric = (id: HistoryMetric) => setSelectedMetrics((current) => current.includes(id) ? current.filter((metric) => metric !== id) : [...current, id]);
@@ -896,9 +1008,14 @@ function HistoryPage({gatewayUrl,gatewayEvents,t,language,snapshot,cellStats,cha
 
   return <div className={`page-content history-page ${dragSelection?"selecting-time":""}`} onWheel={handleHistoryWheel} onContextMenu={handleChartContextMenu} onPointerDown={handleZoomPointerDown} onPointerMove={handleZoomPointerMove} onPointerUp={handleZoomPointerEnd} onPointerCancel={handleZoomPointerEnd} onDoubleClick={handleChartDoubleClick}>
     {dragSelection&&<div className="time-selection-overlay" style={{left:Math.min(dragSelection.startX,dragSelection.currentX),top:dragSelection.top,width:Math.abs(dragSelection.currentX-dragSelection.startX),height:dragSelection.height}}/>}
-    {chartSettings.historySections.liveCells&&<CellsOverview snapshot={snapshot} t={t} cellStats={cellStats}/>}
-    {chartSettings.historySections.dischargeCurrentDistribution&&<DischargeCurrentDistributionPanel gatewayUrl={gatewayUrl} language={language} t={t} onHide={()=>hideHistorySection("dischargeCurrentDistribution")}/>}
-    {chartSettings.historySections.operatingPointCellComparison&&<OperatingPointCellComparisonPanel gatewayUrl={gatewayUrl} language={language} t={t} onHide={()=>hideHistorySection("operatingPointCellComparison")}/>}
+    <section className="panel battery-history-selector">
+      <div className="battery-history-title"><BatteryMedium/><div><span>{t("batteryHistory")}</span><strong>{selectedBattery?batteryName(selectedBattery):(snapshot?.deviceName||t("currentBattery"))}</strong><small>{selectedBatteryKey||currentBatteryKey||"—"}</small></div></div>
+      <div className="battery-history-controls"><label><span>{t("selectBattery")}</span><select value={selectedBatteryKey} onChange={(event)=>setSelectedBatteryKey(event.target.value)}>{currentBatteryKey&&!batteryProfiles.some((profile)=>profile.deviceKey===currentBatteryKey)&&<option value={currentBatteryKey}>{snapshot?.deviceName||t("currentBattery")} · {currentBatteryKey}</option>}{batteryProfiles.map((profile)=><option key={profile.deviceKey} value={profile.deviceKey}>{batteryName(profile)} · {profile.deviceKey}</option>)}</select></label><button type="button" onClick={renameSelectedBattery} disabled={!selectedBatteryKey}>{t("renameBattery")}</button></div>
+      <div className={`battery-history-mode ${viewingCurrentBattery?"current":"archive"}`}><strong>{viewingCurrentBattery?t("currentBattery"):t("savedBatteryHistory")}</strong><span>{selectedBattery?.coverage?.length?`${new Date(selectedBattery.coverage[0].from).toLocaleDateString(language)} — ${new Date(selectedBattery.coverage.at(-1)!.to).toLocaleDateString(language)}`:t("historyStoredLocally")}</span></div>
+    </section>
+    {chartSettings.historySections.liveCells&&viewingCurrentBattery&&<CellsOverview snapshot={snapshot} t={t} cellStats={cellStats}/>}
+    {chartSettings.historySections.dischargeCurrentDistribution&&viewingCurrentBattery&&<DischargeCurrentDistributionPanel gatewayUrl={gatewayUrl} language={language} t={t} onHide={()=>hideHistorySection("dischargeCurrentDistribution")}/>}
+    {chartSettings.historySections.operatingPointCellComparison&&viewingCurrentBattery&&<OperatingPointCellComparisonPanel gatewayUrl={gatewayUrl} language={language} t={t} onHide={()=>hideHistorySection("operatingPointCellComparison")}/>}
     <section className="panel history-toolbar">
       <div><span>{t("period")}</span><div className="period-buttons">{HISTORY_PERIODS.map(([id]) =>
         <button key={id} className={period === id ? "selected" : ""} onClick={() => selectPeriod(id)} disabled={loading}>{t(id)}</button>,
@@ -922,13 +1039,13 @@ function HistoryPage({gatewayUrl,gatewayEvents,t,language,snapshot,cellStats,cha
       </section>
       <CompositeHistoryChart points={points} connectionEvents={connectionEvents} socEvents={socBoundaryEvents} selectedSeries={selectedSeries} period={period} setPeriod={selectPeriod} language={language} t={t} addMetric={addMetric} removeMetric={removeMetric} viewport={viewport} thresholds={thresholds} chartSettings={chartSettings} packVoltageRange={packVoltageRange} onHide={()=>hideHistorySection("compositeChart")}/>
       </>}
-      {chartSettings.historySections.cellVoltageChart&&<CellVoltageHistoryChart points={points} socEvents={history?.socEvents ?? []} connectionEvents={connectionEvents} supportSeries={series} setSeriesColor={setSeriesColor} setSignedColor={setSignedColor} period={period} setPeriod={selectPeriod} language={language} t={t} viewport={viewport} thresholds={thresholds.filter((threshold)=>threshold.metric==="cellVoltageV")} bmsReferences={bmsThresholdReferences("cellVoltageV",snapshot?.protectionSettings,t)} chemistry={snapshot?.chemistry} protectionSettings={snapshot?.protectionSettings} chartSettings={chartSettings} setChartSettings={setChartSettings} onHide={()=>hideHistorySection("cellVoltageChart")}/>}
-      {chartSettings.historySections.cellEnergyEstimate&&<CellEnergyEstimatePanel gatewayUrl={gatewayUrl} snapshot={snapshot} t={t} onHide={()=>hideHistorySection("cellEnergyEstimate")}/>}
+      {chartSettings.historySections.cellVoltageChart&&<CellVoltageHistoryChart points={points} socEvents={history?.socEvents ?? []} connectionEvents={connectionEvents} supportSeries={series} setSeriesColor={setSeriesColor} setSignedColor={setSignedColor} period={period} setPeriod={selectPeriod} language={language} t={t} viewport={viewport} thresholds={thresholds.filter((threshold)=>threshold.metric==="cellVoltageV")} bmsReferences={bmsThresholdReferences("cellVoltageV",historySnapshot?.protectionSettings,t)} chemistry={historySnapshot?.chemistry} protectionSettings={historySnapshot?.protectionSettings} chartSettings={chartSettings} setChartSettings={setChartSettings} onHide={()=>hideHistorySection("cellVoltageChart")}/>}
+      {chartSettings.historySections.cellEnergyEstimate&&viewingCurrentBattery&&<CellEnergyEstimatePanel gatewayUrl={gatewayUrl} snapshot={snapshot} t={t} onHide={()=>hideHistorySection("cellEnergyEstimate")}/>}
       {chartSettings.historySections.cellResistanceChart&&<CellResistanceHistoryChart points={points} connectionEvents={connectionEvents} period={period} setPeriod={selectPeriod} language={language} t={t} viewport={viewport} thresholds={thresholds} chartSettings={chartSettings} setChartSettings={setChartSettings} onHide={()=>hideHistorySection("cellResistanceChart")}/>}
-      {visibleIndividualSeries.length>0&&<IndividualHistoryCharts points={points} connectionEvents={connectionEvents} socEvents={socBoundaryEvents} series={visibleIndividualSeries} period={period} setPeriod={selectPeriod} language={language} t={t} viewport={viewport} thresholds={thresholds} protectionSettings={snapshot?.protectionSettings} packVoltageRange={packVoltageRange} chartSettings={chartSettings} setChartSettings={setChartSettings} setSeriesColor={setSeriesColor} setSignedColor={setSignedColor}/>}
+      {visibleIndividualSeries.length>0&&<IndividualHistoryCharts points={points} connectionEvents={connectionEvents} socEvents={socBoundaryEvents} series={visibleIndividualSeries} period={period} setPeriod={selectPeriod} language={language} t={t} viewport={viewport} thresholds={thresholds} protectionSettings={historySnapshot?.protectionSettings} packVoltageRange={packVoltageRange} chartSettings={chartSettings} setChartSettings={setChartSettings} setSeriesColor={setSeriesColor} setSignedColor={setSignedColor}/>}
       {chartSettings.historySections.correlationChart&&<CorrelationChart points={points} title={t("currentPowerCorrelation")} noDataLabel={t("noCorrelationData")} t={t} onHide={()=>hideHistorySection("correlationChart")}/>}
     </HistoryRangeStatus.Provider></HistoryEventWindow.Provider>}
-    {chartSettings.historySections.balanceDiagnostics&&<BalanceDiagnosticsPanel gatewayUrl={gatewayUrl} language={language} t={t} onHide={()=>hideHistorySection("balanceDiagnostics")}/>}
+    {chartSettings.historySections.balanceDiagnostics&&viewingCurrentBattery&&<BalanceDiagnosticsPanel gatewayUrl={gatewayUrl} language={language} t={t} onHide={()=>hideHistorySection("balanceDiagnostics")}/>}
   </div>;
 }
 
@@ -1184,8 +1301,6 @@ function CompositeHistoryChart({ points, connectionEvents, socEvents, selectedSe
             return <g key={`${series.id}-y-${step}`}><line className="chart-grid" x1={left} x2={width-right} y1={gy} y2={gy}/><text className="lane-axis-label" x={left-10} y={gy+4} textAnchor="end">{value.toFixed(series.decimals)} {series.unit}</text></g>;
           })}
            <rect x={left} y={laneTop(seriesIndex)} width="4" height={laneHeight} rx="2" fill={displayColor}/>
-            <rect className="lane-title-bg" x={left+7} y={laneTop(seriesIndex)+4} width={Math.min(175,series.title.length*8+18)} height="20" rx="4"/>
-            <text className="lane-title" x={left+12} y={laneTop(seriesIndex)+18} fill={displayColor}>{series.title}</text>
            {(series.id === "currentA" || series.id === "powerW") && range.minimum<=0&&range.maximum>=0 && <line className="zero-line" x1={left} x2={width-right} y1={y(series, 0, seriesIndex)} y2={y(series, 0, seriesIndex)}/>}
            {series.thresholdMetric && <ThresholdLines thresholds={thresholds.filter((threshold) => threshold.metric === series.thresholdMetric)} y={(value) => y(series, value, seriesIndex)} left={left} right={width-right} unit={series.unit} decimals={series.decimals} showLabels={chartSettings.showThresholdLabels} clampY={{top:laneTop(seriesIndex)+8,bottom:laneBottom(seriesIndex)-8}}/>}
          </g>;
@@ -1199,6 +1314,7 @@ function CompositeHistoryChart({ points, connectionEvents, socEvents, selectedSe
       {chartSettings.showCurveShadows&&paths.filter(({series})=>!series.directionalColors).map(({series,areaPath}) => <path key={`${series.id}-area`} d={areaPath} fill={`url(#lane-fill-${series.id})`} clipPath={`url(#lane-clip-${series.id})`} className="lane-area"/>)}
       {chartSettings.showCurveShadows&&paths.map(({series,directionalPaths})=>directionalPaths&&series.directionalColors?<g key={`${series.id}-directional-area`} clipPath={`url(#lane-clip-${series.id})`}>{directionalPaths.positive.map((segment,index)=><path key={`positive-${index}`} d={segment.area} fill={`url(#lane-fill-${series.id}-positive)`}/>)}{directionalPaths.negative.map((segment,index)=><path key={`negative-${index}`} d={segment.area} fill={`url(#lane-fill-${series.id}-negative)`}/>)}</g>:null)}
       {paths.map(({series,path,directionalPaths}) => directionalPaths&&series.directionalColors ? <g key={series.id} clipPath={`url(#lane-clip-${series.id})`}>{directionalPaths.positive.map((segment,index)=><path key={`positive-${index}`} d={segment.line} fill="none" stroke={series.directionalColors!.positive} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" className="chart-line composite-line" style={{filter:"none"}}/>)}{directionalPaths.negative.map((segment,index)=><path key={`negative-${index}`} d={segment.line} fill="none" stroke={series.directionalColors!.negative} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" className="chart-line composite-line" style={{filter:"none"}}/>)}</g> : <path key={series.id} d={path} fill="none" stroke={series.color} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" className="chart-line composite-line" clipPath={`url(#lane-clip-${series.id})`}/>) }
+      {selectedSeries.map((series,seriesIndex)=><g key={`lane-title-${series.id}`} pointerEvents="none"><rect className="lane-title-bg" x={left+7} y={laneTop(seriesIndex)+4} width={Math.min(175,series.title.length*8+18)} height="20" rx="4"/><text className="lane-title" x={left+12} y={laneTop(seriesIndex)+18} fill={seriesColorForValue(series,series.value(points[points.length-1]))}>{series.title}</text></g>)}
       {selectedSeries[0]&&<ConnectionEventMarkers events={connectionEvents} points={points} x={x} yValue={(point)=>y(selectedSeries[0],selectedSeries[0].value(point),0)} left={left} right={width-right} top={laneTop(0)} bottom={laneBottom(0)} language={language} t={t}/>}
       {chartSettings.showSocEvents&&socSeriesIndex>=0&&<SocBoundaryPointMarkers events={socEvents.filter((event)=>event.timestamp>=firstTime&&event.timestamp<=lastTime)} x={x} yValue={(event)=>y(selectedSeries[socSeriesIndex],event.socPercent,socSeriesIndex)} left={left} right={width-right} top={laneTop(socSeriesIndex)} bottom={laneBottom(socSeriesIndex)} language={language} t={t}/>}
       {hoveredPoint && <><line className="cursor-line" x1={x(hoveredPoint.timestamp)} x2={x(hoveredPoint.timestamp)} y1={top} y2={height-bottom}/>{selectedSeries.map((series, seriesIndex) => <circle key={series.id} cx={x(hoveredPoint.timestamp)} cy={y(series, series.value(hoveredPoint), seriesIndex)} r="6" fill={series.value(hoveredPoint)>=0?series.directionalColors?.positive??series.color:series.directionalColors?.negative??series.color} stroke="#fff" strokeWidth="2" vectorEffect="non-scaling-stroke"/>)}</>}
@@ -1331,6 +1447,7 @@ function CellVoltageHistoryChart({ points, socEvents, connectionEvents, supportS
     <ChartMarkerToolbar markers={markers} setMarkers={setMarkers} firstTime={firstTime} lastTime={lastTime} language={language} t={t}/>
     {showThresholdEditor&&<><InlineThresholdEditor metric="cellVoltageV" unit="V" step={.001} settings={chartSettings} setSettings={setChartSettings} t={t} bmsReferences={bmsReferences}/>{!standaloneMode&&<div className="combined-threshold-note"><AlertTriangle/>{t("combinedThresholdsHidden")}</div>}</>}
     <div className="cell-series-toolbar"><div><button type="button" onClick={() => setSelectedCells(Array.from({length:cellCount},(_,index)=>index))}>{t("selectAll")}</button><button type="button" onClick={() => setSelectedCells([])}>{t("clearCells")}</button></div><span>{t("cellHistoryHint")}</span></div>
+    <div className="cell-curve-color-note" role="note"><strong>{t("cellCurveColorMeaningTitle")}</strong><span>{t("cellCurveColorMeaning")}</span></div>
     <div className="cell-series-list">{Array.from({length:cellCount},(_,index) => <div className={`cell-series-choice ${activeCells.includes(index)?"selected":""}`} key={index}><button type="button" onClick={() => toggleCell(index)} aria-pressed={activeCells.includes(index)}><i style={{background:cellColors[index]}}/>{activeCells.includes(index)?"✓ ":""}C{index+1}</button><label title={t("curveColor")}><input type="color" value={cellColors[index]} aria-label={`${t("curveColor")}: C${index+1}`} onChange={(event) => setCellColors((current) => ({...current,[index]:event.target.value}))}/></label></div>)}</div>
     <div className="support-series-list"><strong>{t("combineWith")}</strong>{supportSeries.map((series)=><div className={`series-choice support-series-choice ${supportMetrics.includes(series.id)?"selected":""}`} key={series.id}><button type="button" onClick={()=>toggleSupportMetric(series.id)} aria-pressed={supportMetrics.includes(series.id)}><i style={{background:series.color}}/>{supportMetrics.includes(series.id)?"✓ ":""}{series.title}</button>{series.directionalColors?<SignedColorInputs series={series} t={t} onChange={(direction,color)=>setSignedColor(series.id as SignedHistoryMetric,direction,color)}/>:<label title={t("curveColor")}><input type="color" value={series.color} aria-label={`${t("curveColor")}: ${series.title}`} onChange={(event)=>setSeriesColor(series.id,event.target.value)}/></label>}</div>)}</div>
     {activeCells.length===0&&activeSupportSeries.length===0?<div className="chart-empty"><ChartNoAxesCombined/><span>{t("noSelectedCurves")}</span></div>:<div className="cell-history-plot"><svg viewBox={`0 0 ${width} ${height}`} style={{height:"auto",aspectRatio:`${width} / ${height}`}} role="img" aria-label={t("cellHistory")} onPointerMove={handlePointerMove} onPointerUp={()=>setDraggingMarkerId(null)} onPointerLeave={()=>{setHoveredIndex(null);setDraggingMarkerId(null);}}><defs>{activeSupportSeries.map((series,seriesIndex)=><React.Fragment key={series.id}><clipPath id={`support-lane-clip-${series.id}`}><rect x={left} y={supportTop(seriesIndex)} width={width-left-right} height={supportLaneHeight} rx="7"/></clipPath>{series.directionalColors&&<><linearGradient id={`support-fill-${series.id}-positive`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={series.directionalColors!.positive} stopOpacity=".28"/><stop offset="100%" stopColor={series.directionalColors!.positive} stopOpacity=".015"/></linearGradient><linearGradient id={`support-fill-${series.id}-negative`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={series.directionalColors!.negative} stopOpacity=".015"/><stop offset="100%" stopColor={series.directionalColors!.negative} stopOpacity=".28"/></linearGradient></>}</React.Fragment>)}</defs>
@@ -1341,9 +1458,10 @@ function CellVoltageHistoryChart({ points, socEvents, connectionEvents, supportS
       {paths.map(({cellIndex,path})=><path key={cellIndex} d={path} fill="none" stroke={cellColors[cellIndex]} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" className="chart-line cell-history-line"/>)}
       <ThresholdLines thresholds={visibleCellThresholds} y={cellY} left={left} right={width-right} unit="V" decimals={3} showLabels={chartSettings.showThresholdLabels} valueAtY={(position)=>maximum-(position-top)/cellLaneHeight*(maximum-minimum)} step={.001} onAdjust={(threshold,value)=>adjustCustomThreshold(chartSettings,setChartSettings,threshold,value)} clampY={{top:top+8,bottom:top+cellLaneHeight-8}}/>
       <ChargeChannelMarkers points={points} thresholds={visibleCellThresholds} x={x} y={cellY} left={left} right={width-right} top={top} bottom={top+cellLaneHeight} language={language} t={t}/>
-      {activeSupportSeries.map((series,seriesIndex)=>{const range=supportRanges.get(series.id)!;const signed=series.id==="currentA"||series.id==="powerW";const displayColor=seriesColorForValue(series,series.value(points.at(-1)!));return <g key={`support-lane-${series.id}`}><rect className={`chart-lane ${seriesIndex%2?"alternate":""} ${signed?"current-lane":""}`} x={left} y={supportTop(seriesIndex)} width={width-left-right} height={supportLaneHeight} rx="7"/>{[0,.5,1].map((step)=>{const gy=supportTop(seriesIndex)+step*supportLaneHeight;const value=range.maximum-step*(range.maximum-range.minimum);return <g key={`${series.id}-${step}`}><line className="chart-grid" x1={left} x2={width-right} y1={gy} y2={gy}/><text className="lane-axis-label" x={left-10} y={gy+4} textAnchor="end">{value.toFixed(series.decimals)} {series.unit}</text></g>;})}{signed&&range.minimum<=0&&range.maximum>=0&&<line className="zero-line" x1={left} x2={width-right} y1={supportY(series,0,seriesIndex)} y2={supportY(series,0,seriesIndex)}/>}<rect className="lane-title-bg" x={left+7} y={supportTop(seriesIndex)+4} width={Math.min(175,series.title.length*8+18)} height="20" rx="4"/><text className="lane-title" x={left+12} y={supportTop(seriesIndex)+18} fill={displayColor}>{series.title}</text></g>;})}
+      {activeSupportSeries.map((series,seriesIndex)=>{const range=supportRanges.get(series.id)!;const signed=series.id==="currentA"||series.id==="powerW";return <g key={`support-lane-${series.id}`}><rect className={`chart-lane ${seriesIndex%2?"alternate":""} ${signed?"current-lane":""}`} x={left} y={supportTop(seriesIndex)} width={width-left-right} height={supportLaneHeight} rx="7"/>{[0,.5,1].map((step)=>{const gy=supportTop(seriesIndex)+step*supportLaneHeight;const value=range.maximum-step*(range.maximum-range.minimum);return <g key={`${series.id}-${step}`}><line className="chart-grid" x1={left} x2={width-right} y1={gy} y2={gy}/><text className="lane-axis-label" x={left-10} y={gy+4} textAnchor="end">{value.toFixed(series.decimals)} {series.unit}</text></g>;})}{signed&&range.minimum<=0&&range.maximum>=0&&<line className="zero-line" x1={left} x2={width-right} y1={supportY(series,0,seriesIndex)} y2={supportY(series,0,seriesIndex)}/>}</g>;})}
       {chartSettings.showCurveShadows&&supportPaths.map(({series,directionalPaths})=>directionalPaths&&series.directionalColors?<g key={`support-${series.id}-area`} clipPath={`url(#support-lane-clip-${series.id})`}>{directionalPaths.positive.map((segment,index)=><path key={`positive-${index}`} d={segment.area} fill={`url(#support-fill-${series.id}-positive)`}/>)}{directionalPaths.negative.map((segment,index)=><path key={`negative-${index}`} d={segment.area} fill={`url(#support-fill-${series.id}-negative)`}/>)}</g>:null)}
       {supportPaths.map(({series,path,directionalPaths})=>directionalPaths&&series.directionalColors?<g key={`support-${series.id}`} clipPath={`url(#support-lane-clip-${series.id})`}>{directionalPaths.positive.map((segment,index)=><path key={`positive-${index}`} d={segment.line} fill="none" stroke={series.directionalColors!.positive} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" className="chart-line composite-line" style={{filter:"none"}}/>)}{directionalPaths.negative.map((segment,index)=><path key={`negative-${index}`} d={segment.line} fill="none" stroke={series.directionalColors!.negative} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" className="chart-line composite-line" style={{filter:"none"}}/>)}</g>:<path key={`support-${series.id}`} d={path} fill="none" stroke={series.color} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" className="chart-line composite-line" clipPath={`url(#support-lane-clip-${series.id})`}/>) }
+      {activeSupportSeries.map((series,seriesIndex)=><g key={`support-title-${series.id}`} pointerEvents="none"><rect className="lane-title-bg" x={left+7} y={supportTop(seriesIndex)+4} width={Math.min(175,series.title.length*8+18)} height="20" rx="4"/><text className="lane-title" x={left+12} y={supportTop(seriesIndex)+18} fill={seriesColorForValue(series,series.value(points.at(-1)!))}>{series.title}</text></g>)}
       {activeCells[0]!=null&&<ConnectionEventMarkers events={connectionEvents} points={points} x={x} yValue={(point)=>{const value=point.cellsV?.[activeCells[0]];return Number.isFinite(value)?cellY(value!):null;}} left={left} right={width-right} top={top} bottom={top+cellLaneHeight} language={language} t={t}/>}
       {chartSettings.showSocEvents&&boundaryEvents.filter((event)=>event.timestamp>=firstTime&&event.timestamp<=lastTime).map((event)=><g key={`soc-event-${event.timestamp}`} className={`soc-event-marker ${selectedEventTimestamp===event.timestamp?"selected":""}`} onClick={()=>setSelectedEventTimestamp(event.timestamp)} role="button" tabIndex={0} onKeyDown={(keyboardEvent)=>{if(keyboardEvent.key==="Enter"||keyboardEvent.key===" ")setSelectedEventTimestamp(event.timestamp);}}><line x1={x(event.timestamp)} x2={x(event.timestamp)} y1={top} y2={height-bottom}/><circle cx={x(event.timestamp)} cy={top+12} r="9"/><text x={x(event.timestamp)} y={top+16} textAnchor="middle">{event.socPercent===0?"0":"100"}</text></g>)}
       {hoveredPoint&&<><line className="cursor-line" x1={x(hoveredPoint.timestamp)} x2={x(hoveredPoint.timestamp)} y1={top} y2={height-bottom}/>{activeCells.map((cellIndex)=>{const value=hoveredPoint.cellsV?.[cellIndex];return Number.isFinite(value)?<circle key={cellIndex} cx={x(hoveredPoint.timestamp)} cy={cellY(value!)} r="5" fill={cellColors[cellIndex]} stroke="#fff" strokeWidth="2" vectorEffect="non-scaling-stroke"/>:null;})}{activeSupportSeries.map((series,seriesIndex)=><circle key={series.id} cx={x(hoveredPoint.timestamp)} cy={supportY(series,series.value(hoveredPoint),seriesIndex)} r="5" fill={series.value(hoveredPoint)>=0?series.directionalColors?.positive??series.color:series.directionalColors?.negative??series.color} stroke="#fff" strokeWidth="2" vectorEffect="non-scaling-stroke"/>)}</>}
@@ -1365,24 +1483,26 @@ function InlineThresholdEditor({metric,unit,step,settings,setSettings,t,bmsRefer
   const limits=settings.customThresholds[metric];
   const visible=settings.showCustomThresholds&&settings.customThresholdVisibility[metric];
   const [validationError,setValidationError]=useState<string|null>(null);
+  const [invalidLimit,setInvalidLimit]=useState<{side:"low"|"high";raw:string}|null>(null);
   const update=(side:"low"|"high",raw:string)=>{
     const value=raw===""?null:Number(raw);
-    if(value!==null&&!Number.isFinite(value))return;
+    if(value!==null&&!Number.isFinite(value)){setInvalidLimit({side,raw});setValidationError(thresholdValidationMessage("number",t));return;}
     const next={...limits,[side]:value};
     const issue=thresholdValidationIssue(metric,next);
-    if(issue){setValidationError(thresholdValidationMessage(issue,t));return;}
+    if(issue){setInvalidLimit({side,raw});setValidationError(thresholdValidationMessage(issue,t));return;}
+    setInvalidLimit(null);
     setValidationError(null);
     setSettings({...settings,showCustomThresholds:value!==null?true:settings.showCustomThresholds,customThresholdVisibility:value!==null?{...settings.customThresholdVisibility,[metric]:true}:settings.customThresholdVisibility,customThresholds:{...settings.customThresholds,[metric]:next}});
   };
-  const clear=()=>{setValidationError(null);setSettings({...settings,customThresholds:{...settings.customThresholds,[metric]:{low:null,high:null}}});};
+  const clear=()=>{setInvalidLimit(null);setValidationError(null);setSettings({...settings,customThresholds:{...settings.customThresholds,[metric]:{low:null,high:null}}});};
   const setColor=(side:"low"|"high",color:string)=>setSettings({...settings,customThresholdColors:{...settings.customThresholdColors,[metric]:{...settings.customThresholdColors[metric],[side]:color}}});
   const setBmsDisplay=(id:BmsThresholdId,patch:Partial<{visible:boolean;color:string}>)=>setSettings({...settings,showBmsThresholds:patch.visible===true?true:settings.showBmsThresholds,bmsThresholdDisplay:{...settings.bmsThresholdDisplay,[id]:{...settings.bmsThresholdDisplay[id],...patch}}});
   const setVisible=(value:boolean)=>setSettings({...settings,showCustomThresholds:value?true:settings.showCustomThresholds,customThresholdVisibility:{...settings.customThresholdVisibility,[metric]:value}});
   return <div className="inline-threshold-editor">
     <div className="inline-threshold-heading"><span><SlidersHorizontal/><strong>{t("thresholdSettings")}</strong></span><label><input type="checkbox" checked={visible} onChange={(event)=>setVisible(event.target.checked)}/><i/>{t("showOnChart")}</label></div>
     <div className="inline-threshold-fields">
-      <label><span>{t("lowerThreshold")}</span><div><input type="number" min={THRESHOLD_BOUNDS[metric][0]} max={THRESHOLD_BOUNDS[metric][1]} step={step} value={limits.low??""} placeholder="—" onChange={(event)=>update("low",event.target.value)}/><b>{unit}</b><input className="threshold-color-input" type="color" value={settings.customThresholdColors[metric].low} onChange={(event)=>setColor("low",event.target.value)} aria-label={`${t("thresholdColor")}: ${t("lowerThreshold")}`}/></div></label>
-      <label><span>{t("upperThreshold")}</span><div><input type="number" min={THRESHOLD_BOUNDS[metric][0]} max={THRESHOLD_BOUNDS[metric][1]} step={step} value={limits.high??""} placeholder="—" onChange={(event)=>update("high",event.target.value)}/><b>{unit}</b><input className="threshold-color-input" type="color" value={settings.customThresholdColors[metric].high} onChange={(event)=>setColor("high",event.target.value)} aria-label={`${t("thresholdColor")}: ${t("upperThreshold")}`}/></div></label>
+      <label><span>{t("lowerThreshold")}</span><div><input type="number" min={THRESHOLD_BOUNDS[metric][0]} max={THRESHOLD_BOUNDS[metric][1]} step={step} value={invalidLimit?.side==="low"?invalidLimit.raw:limits.low??""} placeholder="—" onChange={(event)=>update("low",event.target.value)}/><b>{unit}</b><input className="threshold-color-input" type="color" value={settings.customThresholdColors[metric].low} onChange={(event)=>setColor("low",event.target.value)} aria-label={`${t("thresholdColor")}: ${t("lowerThreshold")}`}/></div></label>
+      <label><span>{t("upperThreshold")}</span><div><input type="number" min={THRESHOLD_BOUNDS[metric][0]} max={THRESHOLD_BOUNDS[metric][1]} step={step} value={invalidLimit?.side==="high"?invalidLimit.raw:limits.high??""} placeholder="—" onChange={(event)=>update("high",event.target.value)}/><b>{unit}</b><input className="threshold-color-input" type="color" value={settings.customThresholdColors[metric].high} onChange={(event)=>setColor("high",event.target.value)} aria-label={`${t("thresholdColor")}: ${t("upperThreshold")}`}/></div></label>
       <button type="button" onClick={clear}>{t("clearThresholds")}</button>
     </div>
     {bmsReferences.length>0&&<div className="bms-threshold-references"><strong>{t("bmsThresholdReferences")}</strong><div>{bmsReferences.map((item)=>{const display=item.id?settings.bmsThresholdDisplay[item.id]:null;return <span className={display?.visible?"shown":""} key={item.label}>{item.id&&<input type="checkbox" checked={display?.visible??false} onChange={(event)=>setBmsDisplay(item.id!,{visible:event.target.checked})} aria-label={`${t("showOnChart")}: ${item.label}`}/>}<b>{item.label}</b>{item.value.toFixed(item.unit==="V"?3:item.unit==="mV"?0:1)} {item.unit}{display&&<input className="bms-threshold-color" type="color" value={display.color} onChange={(event)=>setBmsDisplay(item.id!,{color:event.target.value})} aria-label={`${t("thresholdColor")}: ${item.label}`}/>}</span>;})}</div></div>}
@@ -1581,7 +1701,15 @@ function IndividualMetricChart({points,connectionEvents,socEvents,series,period,
   const lastTime=viewport.to;
   const timeRange=Math.max(1,lastTime-firstTime);
   const x=(timestamp:number)=>left+(timestamp-firstTime)/timeRange*(width-left-right);
-  const dataValues=points.map(series.value).filter(Number.isFinite);
+  const isTemperatureChart=series.id==="temperatureC";
+  const temperature1Value=(point:HistoryPoint)=>point.temperature1C ?? point.temperatureC;
+  const temperature2Value=(point:HistoryPoint)=>point.temperature2C;
+  const hasTemperature2=isTemperatureChart&&points.some((point)=>Number.isFinite(temperature2Value(point)));
+  const dataValues=points.flatMap((point)=>{
+    const primary=isTemperatureChart?temperature1Value(point):series.value(point);
+    const secondary=hasTemperature2?temperature2Value(point):null;
+    return [primary,secondary].filter((value):value is number=>value!=null&&Number.isFinite(value));
+  });
   const values=dataValues;
   let minimum=series.id==="packVoltageV"?packVoltageRange.minimum:Math.min(...values);
   let maximum=series.id==="packVoltageV"?packVoltageRange.maximum:Math.max(...values);
@@ -1596,7 +1724,9 @@ function IndividualMetricChart({points,connectionEvents,socEvents,series,period,
   }
   const y=(value:number)=>top+(maximum-value)/(maximum-minimum)*(height-top-bottom);
   const baseline=series.directionalColors?y(0):height-bottom;
-  const {line:linePath,area:areaPath}=historyPaths(points,series.value,x,y,baseline,connectionEvents);
+  const primaryValue=isTemperatureChart?temperature1Value:series.value;
+  const {line:linePath,area:areaPath}=historyPaths(points,primaryValue,x,y,baseline,connectionEvents);
+  const temperature2Path=hasTemperature2?historyPaths(points,temperature2Value,x,y,baseline,connectionEvents).line:"";
   const directionalPaths=series.directionalColors?splitSignedPaths(points,series.value,(point)=>x(point.timestamp),y,connectionEvents):null;
   const date=(timestamp:number)=>new Date(timestamp).toLocaleString(language,{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
   const hoveredPoint=hoveredIndex==null?null:points[hoveredIndex];
@@ -1609,7 +1739,8 @@ function IndividualMetricChart({points,connectionEvents,socEvents,series,period,
     for(let index=1;index<points.length;index+=1)if(Math.abs(points[index].timestamp-timestamp)<Math.abs(points[nearest].timestamp-timestamp))nearest=index;
     setHoveredIndex(nearest);
   };
-  const latest=series.value(points[points.length-1]);
+  const latest=primaryValue(points[points.length-1]);
+  const latestTemperature2=hasTemperature2?temperature2Value(points[points.length-1]):null;
   const axisDecimals=series.id==="packVoltageV"?3:series.decimals;
   const thresholdMetric=series.thresholdMetric;
   const supportsThresholds=thresholdMetric!=null;
@@ -1619,6 +1750,7 @@ function IndividualMetricChart({points,connectionEvents,socEvents,series,period,
     {[0,1,2,3,4].map((step)=>{const gy=top+step/4*(height-top-bottom);const value=maximum-step/4*(maximum-minimum);return <g key={`iy-${step}`}><line className="chart-grid" x1={left} x2={width-right} y1={gy} y2={gy}/><text className="axis-label" x={left-10} y={gy+4} textAnchor="end">{value.toFixed(axisDecimals)} {series.unit}</text></g>;})}
     {[0,1,2,3,4].map((step)=>{const gx=left+step/4*(width-left-right);const timestamp=firstTime+step/4*timeRange;return <g key={`ix-${step}`}><line className="chart-grid vertical" x1={gx} x2={gx} y1={top} y2={height-bottom}/><text className="time-label" x={gx} y={height-18} textAnchor={step===0?"start":step===4?"end":"middle"}>{date(timestamp)}</text></g>;})}
     <ChartMarkerLines markers={markers} x={x} top={top} bottom={height-bottom} onPointerDown={(id,event)=>{event.currentTarget.setPointerCapture(event.pointerId);setDraggingMarkerId(id);}}/>
+    {hasTemperature2&&<><path d={temperature2Path} fill="none" stroke="#00a6a6" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" className="chart-line" clipPath={`url(#individual-clip-${series.id})`}/><g className="temperature-sensor-legend"><circle cx={left+12} cy={top+12} r="4" fill={series.color}/><text x={left+22} y={top+16}>{t("temperatureSensor1")}</text><circle cx={left+104} cy={top+12} r="4" fill="#00a6a6"/><text x={left+114} y={top+16}>{t("temperatureSensor2")}</text></g></>}
     {minimum<0&&maximum>0&&<line className="zero-line" x1={left} x2={width-right} y1={y(0)} y2={y(0)}/>}<ThresholdLines thresholds={thresholds} y={y} left={left} right={width-right} unit={series.unit} decimals={series.decimals} showLabels={chartSettings.showThresholdLabels} valueAtY={supportsThresholds?(position)=>maximum-(position-top)/(height-top-bottom)*(maximum-minimum):undefined} step={thresholdStep} onAdjust={supportsThresholds?(threshold,value)=>adjustCustomThreshold(chartSettings,setChartSettings,threshold,value):undefined} clampY={{top:top+8,bottom:height-bottom-8}}/>{chartSettings.showCurveShadows&&!series.directionalColors&&<path d={areaPath} fill={`url(#individual-fill-${series.id})`} clipPath={`url(#individual-clip-${series.id})`} className="chart-area"/>}{chartSettings.showCurveShadows&&directionalPaths&&series.directionalColors&&<g clipPath={`url(#individual-clip-${series.id})`}>{directionalPaths.positive.map((segment,index)=><path key={`positive-area-${index}`} d={segment.area} fill={`url(#individual-fill-${series.id}-positive)`}/>)}{directionalPaths.negative.map((segment,index)=><path key={`negative-area-${index}`} d={segment.area} fill={`url(#individual-fill-${series.id}-negative)`}/>)}</g>}{directionalPaths&&series.directionalColors?<g clipPath={`url(#individual-clip-${series.id})`}>{directionalPaths.positive.map((segment,index)=><path key={`positive-${index}`} d={segment.line} fill="none" stroke={series.directionalColors!.positive} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" className="chart-line" style={{filter:"none"}}/>)}{directionalPaths.negative.map((segment,index)=><path key={`negative-${index}`} d={segment.line} fill="none" stroke={series.directionalColors!.negative} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" className="chart-line" style={{filter:"none"}}/>)}</g>:<path d={linePath} fill="none" stroke={series.color} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" className="chart-line" clipPath={`url(#individual-clip-${series.id})`}/>}<ConnectionEventMarkers events={connectionEvents} points={points} x={x} yValue={(point)=>y(series.value(point))} left={left} right={width-right} top={top} bottom={height-bottom} language={language} t={t}/>{series.id==="socPercent"&&chartSettings.showSocEvents&&<SocBoundaryPointMarkers events={socEvents.filter((event)=>event.timestamp>=firstTime&&event.timestamp<=lastTime)} x={x} yValue={(event)=>y(event.socPercent)} left={left} right={width-right} top={top} bottom={height-bottom} language={language} t={t}/>} {hoveredPoint&&<><line className="cursor-line" x1={x(hoveredPoint.timestamp)} x2={x(hoveredPoint.timestamp)} y1={top} y2={height-bottom}/><circle cx={x(hoveredPoint.timestamp)} cy={y(series.value(hoveredPoint))} r="6" fill={series.value(hoveredPoint)>=0?series.directionalColors?.positive??series.color:series.directionalColors?.negative??series.color} stroke="#fff" strokeWidth="2" vectorEffect="non-scaling-stroke"/></>}
   </svg>{hoveredPoint&&<div className={`chart-readout individual-readout ${Number(hoveredIndex) > points.length * .65 ? "readout-left" : Number(hoveredIndex) < points.length * .25 ? "readout-right" : "readout-center"}`}><time>{new Date(hoveredPoint.timestamp).toLocaleString(language)}</time><span><i style={{background:seriesColorForValue(series,series.value(hoveredPoint))}}/>{series.title}<strong style={{color:seriesColorForValue(series,series.value(hoveredPoint))}}>{series.value(hoveredPoint).toFixed(series.decimals)} {series.unit}</strong></span></div>}</div></article>;
 }
@@ -1708,14 +1840,21 @@ function EventsPage({events,chargeSessions,snapshot,t,acknowledgedAlarmKey,onAck
 function DataExportSettingsPanel({t,gatewayUrl}:{t:ReturnType<typeof translator>;gatewayUrl:string}){
   const [busy,setBusy]=useState<"sql"|"excel"|null>(null);
   const [error,setError]=useState(false);
-  const labels:HistoryExportLabels={dataSheet:t("exportDataSheet"),socSheet:t("exportSocSheet"),connectionSheet:t("exportConnectionSheet"),informationSheet:t("exportInformationSheet"),timestamp:t("exportTimestamp"),timestampMs:t("exportTimestampMs"),voltage:t("voltage"),current:t("current"),power:t("power"),soc:t("soc"),temperature:t("temp"),imbalance:t("imbalance"),balancing:t("balance"),alarmMask:t("exportAlarmMask"),cellVoltage:t("cellVoltage"),cellResistance:t("estimatedResistance"),previousSoc:t("exportPreviousSoc"),connectionEvent:t("exportConnectionEvent"),durationSeconds:t("exportDurationSeconds"),bmsName:t("exportBmsName"),gattStatus:t("gattCode"),exportCreated:t("exportCreated"),periodFrom:t("exportPeriodFrom"),periodTo:t("exportPeriodTo"),sourceRecords:t("recordedSamples"),exportedPoints:t("exportedPoints"),aggregationInterval:t("exportAggregationSeconds"),lost:t("connectionLost"),restored:t("connectionRestored")};
-  async function downloadSql(){setBusy("sql");setError(false);try{const result=await exportHistoryDatabaseSql();const url=URL.createObjectURL(new Blob([result.sql],{type:"application/sql;charset=utf-8"}));const a=document.createElement("a");a.href=url;a.download=`bms-history-${new Date().toISOString().slice(0,10)}.sql`;a.click();window.setTimeout(()=>URL.revokeObjectURL(url),1000);}catch{setError(true);}finally{setBusy(null);}}
-  async function downloadExcel(){setBusy("excel");setError(false);try{const to=Date.now();const history=await fetchGatewayHistory(gatewayUrl,to-365*24*60*60_000,to,5000);if(history.points.length===0)throw new Error("No history");await exportHistoryWorkbook(history,labels);}catch{setError(true);}finally{setBusy(null);}}
-  return <section className="panel data-export-panel"><div className="panel-heading"><span>{t("historyTitle")}</span><small>{t("savedLocally")}</small></div><p>{t("historySectionsHint")}</p><div className="data-export-actions"><button className="database-export-button" onClick={downloadSql} disabled={busy!==null} title={t("databaseExportHint")}><Download size={16}/>{busy==="sql"?t("databaseExporting"):t("databaseExport")}</button><button className="database-export-button" onClick={downloadExcel} disabled={busy!==null} title={t("exportExcel")}><Download size={16}/>{busy==="excel"?t("exportingExcel"):t("exportExcel")}</button></div>{error&&<div className="threshold-validation-error" role="alert">{t("exportFailed")}</div>}</section>;
+  const [profiles,setProfiles]=useState<HistoryCacheMeta[]>([]);
+  const [scope,setScope]=useState("all");
+  const [aliases,setAliases]=useState<Record<string,string>>(loadBatteryAliases);
+  useEffect(()=>{let active=true;const load=()=>listCacheMeta().then((items)=>{if(active)setProfiles(items);}).catch(()=>{});const aliasesUpdated=()=>setAliases(loadBatteryAliases());void load();window.addEventListener("bms-history-cache-updated",load);window.addEventListener("bms-battery-aliases-updated",aliasesUpdated);return()=>{active=false;window.removeEventListener("bms-history-cache-updated",load);window.removeEventListener("bms-battery-aliases-updated",aliasesUpdated);};},[]);
+  const labels:HistoryExportLabels={dataSheet:t("exportDataSheet"),socSheet:t("exportSocSheet"),connectionSheet:t("exportConnectionSheet"),informationSheet:t("exportInformationSheet"),timestamp:t("exportTimestamp"),timestampMs:t("exportTimestampMs"),voltage:t("voltage"),current:t("current"),power:t("power"),soc:t("soc"),temperature:t("temp"),temperature1:t("temperatureSensor1"),temperature2:t("temperatureSensor2"),imbalance:t("imbalance"),balancing:t("balance"),alarmMask:t("exportAlarmMask"),cellVoltage:t("cellVoltage"),cellResistance:t("estimatedResistance"),previousSoc:t("exportPreviousSoc"),connectionEvent:t("exportConnectionEvent"),durationSeconds:t("exportDurationSeconds"),bmsName:t("exportBmsName"),gattStatus:t("gattCode"),exportCreated:t("exportCreated"),periodFrom:t("exportPeriodFrom"),periodTo:t("exportPeriodTo"),sourceRecords:t("recordedSamples"),exportedPoints:t("exportedPoints"),aggregationInterval:t("exportAggregationSeconds"),lost:t("connectionLost"),restored:t("connectionRestored")};
+  const selectedProfiles=scope==="all"?profiles:profiles.filter((profile)=>profile.deviceKey===scope);
+  async function cachedHistory(profile:HistoryCacheMeta){const from=profile.coverage[0]?.from??profile.phoneOldestTimestamp??0;const to=profile.coverage.at(-1)?.to??profile.phoneNewestTimestamp??Date.now();return readCachedHistory(profile.deviceKey,from,to,5000);}
+  async function downloadSql(){setBusy("sql");setError(false);try{const result=await exportHistoryDatabaseSql(scope==="all"?undefined:scope);if(result.recordCount===0)throw new Error("No history");const url=URL.createObjectURL(new Blob([result.sql],{type:"application/sql;charset=utf-8"}));const a=document.createElement("a");a.href=url;a.download=`bms-history-${scope==="all"?"all":scope.replaceAll(":","")}-${new Date().toISOString().slice(0,10)}.sql`;a.click();window.setTimeout(()=>URL.revokeObjectURL(url),1000);}catch{setError(true);}finally{setBusy(null);}}
+  async function downloadExcel(){setBusy("excel");setError(false);try{if(selectedProfiles.length===0){const to=Date.now();const history=await fetchGatewayHistory(gatewayUrl,to-365*24*60*60_000,to,5000);if(history.points.length===0)throw new Error("No history");await exportHistoryWorkbook(history,labels);}else{const histories=(await Promise.all(selectedProfiles.map(async(profile)=>({name:batteryDisplayName(profile,aliases),history:await cachedHistory(profile)})))).filter((item)=>item.history.points.length>0);if(histories.length===0)throw new Error("No history");if(histories.length===1)await exportHistoryWorkbook(histories[0].history,labels);else await exportMultipleHistoryWorkbooks(histories,labels);}}catch{setError(true);}finally{setBusy(null);}}
+  return <section className="panel data-export-panel"><div className="panel-heading"><span>{t("historyTitle")}</span><small>{t("savedLocally")}</small></div><p>{t("historySectionsHint")}</p><label className="data-export-scope"><span>{t("exportScope")}</span><select value={scope} onChange={(event)=>setScope(event.target.value)}><option value="all">{t("allBatteries")}</option>{profiles.map((profile)=><option key={profile.deviceKey} value={profile.deviceKey}>{batteryDisplayName(profile,aliases)} · {profile.deviceKey}</option>)}</select><small>{scope==="all"?t("exportAllHint"):t("exportSelectedHint")}</small></label><div className="data-export-actions"><button className="database-export-button" onClick={downloadSql} disabled={busy!==null} title={t("databaseExportHint")}><Download size={16}/>{busy==="sql"?t("databaseExporting"):t("databaseExport")}</button><button className="database-export-button" onClick={downloadExcel} disabled={busy!==null} title={t("exportExcel")}><Download size={16}/>{busy==="excel"?t("exportingExcel"):t("exportExcel")}</button></div>{error&&<div className="threshold-validation-error" role="alert">{t("exportFailed")}</div>}</section>;
 }
 
 function GraphSettingsPage({t,settings,setSettings,snapshot,language,setLanguage,theme,setTheme,gatewayUrl}:{t:ReturnType<typeof translator>;settings:ChartDisplaySettings;setSettings:(settings:ChartDisplaySettings)=>void;snapshot:GatewaySnapshot|null;language:Language;setLanguage:(value:Language)=>void;theme:AppTheme;setTheme:(value:AppTheme)=>void;gatewayUrl:string}){
   const [thresholdError,setThresholdError]=useState<string|null>(null);
+  const [invalidLimit,setInvalidLimit]=useState<{metric:ThresholdMetric;side:"low"|"high";raw:string}|null>(null);
   const metricRows:Array<[ThresholdMetric,string,string,number]>=[
     ["cellVoltageV",t("cellVoltage"),"V",.001],
     ["packVoltageV",t("voltage"),"V",.01],
@@ -1733,10 +1872,11 @@ function GraphSettingsPage({t,settings,setSettings,snapshot,language,setLanguage
   const setBmsThreshold=(id:BmsThresholdId,patch:Partial<{visible:boolean;color:string}>)=>setSettings({...settings,bmsThresholdDisplay:{...settings.bmsThresholdDisplay,[id]:{...settings.bmsThresholdDisplay[id],...patch}}});
   const setLimit=(metric:ThresholdMetric,side:"low"|"high",raw:string)=>{
     const value=raw===""?null:Number(raw);
-    if(value!=null&&!Number.isFinite(value))return;
+    if(value!=null&&!Number.isFinite(value)){setInvalidLimit({metric,side,raw});setThresholdError(thresholdValidationMessage("number",t));return;}
     const limits={...settings.customThresholds[metric],[side]:value};
     const issue=thresholdValidationIssue(metric,limits);
-    if(issue){setThresholdError(thresholdValidationMessage(issue,t));return;}
+    if(issue){setInvalidLimit({metric,side,raw});setThresholdError(thresholdValidationMessage(issue,t));return;}
+    setInvalidLimit(null);
     setThresholdError(null);
     setSettings({...settings,customThresholds:{...settings.customThresholds,[metric]:limits}});
   };
@@ -1782,7 +1922,7 @@ function GraphSettingsPage({t,settings,setSettings,snapshot,language,setLanguage
       <SettingsToggle label={t("showCorrelationChart")} detail={t("showCorrelationChartHint")} checked={settings.historySections.correlationChart} onChange={(value)=>setHistorySection("correlationChart",value)}/>
       <SettingsToggle label={t("showBalanceDiagnostics")} detail={t("showBalanceDiagnosticsHint")} checked={settings.historySections.balanceDiagnostics} onChange={(value)=>setHistorySection("balanceDiagnostics",value)}/>
     </div></section>
-    <section className="panel custom-threshold-panel"><div className="panel-heading"><span>{t("customThresholds")}</span><small>{t("customThresholdsHint")}</small></div><div className="threshold-table"><div className="threshold-table-head"><span>{t("parameter")}</span><span>{t("lowerThreshold")}</span><span>{t("upperThreshold")}</span></div>{metricRows.map(([metric,label,unit,step])=>{const limits=settings.customThresholds[metric];const [min,max]=THRESHOLD_BOUNDS[metric];return <div className="threshold-row" key={metric}><strong>{label}<small>{unit} · {t("thresholdRangeHint")}: {min}…{max}</small></strong><label><input type="number" min={min} max={max} step={step} value={limits.low??""} onChange={(event)=>setLimit(metric,"low",event.target.value)} placeholder="—" aria-label={`${label}: ${t("lowerThreshold")}`}/><span>{unit}</span></label><label><input type="number" min={min} max={max} step={step} value={limits.high??""} onChange={(event)=>setLimit(metric,"high",event.target.value)} placeholder="—" aria-label={`${label}: ${t("upperThreshold")}`}/><span>{unit}</span></label></div>;})}</div>{thresholdError&&<div className="threshold-validation-error" role="alert">{thresholdError}</div>}<div className="threshold-note"><ShieldCheck/><span>{t("thresholdReadOnlyHint")}</span></div></section>
+    <section className="panel custom-threshold-panel"><div className="panel-heading"><span>{t("customThresholds")}</span><small>{t("customThresholdsHint")}</small></div><div className="threshold-table"><div className="threshold-table-head"><span>{t("parameter")}</span><span>{t("lowerThreshold")}</span><span>{t("upperThreshold")}</span></div>{metricRows.map(([metric,label,unit,step])=>{const limits=settings.customThresholds[metric];const [min,max]=THRESHOLD_BOUNDS[metric];return <div className="threshold-row" key={metric}><strong>{label}<small>{unit} · {t("thresholdRangeHint")}: {min}…{max}</small></strong><label><input type="number" min={min} max={max} step={step} value={invalidLimit?.metric===metric&&invalidLimit.side==="low"?invalidLimit.raw:limits.low??""} onChange={(event)=>setLimit(metric,"low",event.target.value)} placeholder="—" aria-label={`${label}: ${t("lowerThreshold")}`}/><span>{unit}</span></label><label><input type="number" min={min} max={max} step={step} value={invalidLimit?.metric===metric&&invalidLimit.side==="high"?invalidLimit.raw:limits.high??""} onChange={(event)=>setLimit(metric,"high",event.target.value)} placeholder="—" aria-label={`${label}: ${t("upperThreshold")}`}/><span>{unit}</span></label></div>;})}</div>{thresholdError&&<div className="threshold-validation-error" role="alert">{thresholdError}</div>}<div className="threshold-note"><ShieldCheck/><span>{t("thresholdReadOnlyHint")}</span></div></section>
   </div>;
 }
 

@@ -16,6 +16,8 @@ export type GatewaySnapshot = {
   powerW?: number;
   socPercent?: number;
   temperatureC?: number;
+  temperature1C?: number | null;
+  temperature2C?: number | null;
   deltaMv?: number;
   balancing?: boolean;
   chargeMosEnabled?: boolean | null;
@@ -63,6 +65,8 @@ export type HistoryPoint = {
   powerW: number;
   socPercent: number;
   temperatureC: number;
+  temperature1C?: number | null;
+  temperature2C?: number | null;
   deltaMv: number;
   balancing: boolean;
   alarmMask: number;
@@ -137,6 +141,8 @@ export type HistorySyncMetaResponse = {
   oldestTimestamp: number | null;
   newestTimestamp: number | null;
   detailOldestTimestamp: number | null;
+  chemistry?: string | null;
+  cellCount?: number | null;
 };
 
 export type HistorySyncPageResponse = {
@@ -174,6 +180,8 @@ export type PulseResistanceTestResult = {
   restoredCurrentA: number | null;
   socPercent: number;
   temperatureC: number;
+  temperature1C?: number | null;
+  temperature2C?: number | null;
   interruptionMs: number;
   cells: PulseResistanceCellResult[];
 };

@@ -15,8 +15,10 @@ describe("history Excel export", () => {
     const sheets = buildHistoryWorkbook(history, labels, 3_000);
     expect(sheets.map((sheet) => sheet.sheet)).toEqual(["dataSheet", "socSheet", "connectionSheet", "informationSheet"]);
     expect(sheets[0].data).toHaveLength(2);
-    expect(sheets[0].data[0]).toHaveLength(18);
-    expect(sheets[0].data[1]).toHaveLength(18);
+    expect(sheets[0].data[0]).toHaveLength(20);
+    expect(sheets[0].data[1]).toHaveLength(20);
+    expect(sheets[0].data[1][7]).toEqual(expect.objectContaining({ value: 24 }));
+    expect(sheets[0].data[1][8]).toBeNull();
     expect(sheets[1].data).toHaveLength(2);
     expect(sheets[2].data[1][2]).toBe("lost");
   });

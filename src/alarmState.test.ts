@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alarmCount, unknownAlarmMask } from "./alarmState";
+import { actionableAlarmMask, alarmCount, unknownAlarmMask } from "./alarmState";
 import type { GatewaySnapshot } from "./types";
 
 const snapshot = (values: Partial<GatewaySnapshot>): GatewaySnapshot => ({
@@ -9,6 +9,11 @@ const snapshot = (values: Partial<GatewaySnapshot>): GatewaySnapshot => ({
 });
 
 describe("alarm state", () => {
+  it("excludes the password reminder from a cached battery alarm mask", () => {
+    expect(actionableAlarmMask(0x80000)).toBe(0);
+    expect(actionableAlarmMask(0x80004)).toBe(0x4);
+  });
+
   it("does not hide an unknown raw alarm bit from an older gateway", () => {
     const value = snapshot({ alarmMask: 0x20000000, alarms: [] });
     expect(unknownAlarmMask(value)).toBe(0x20000000);

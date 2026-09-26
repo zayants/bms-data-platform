@@ -1,6 +1,9 @@
 import type { GatewaySnapshot } from "./types";
 
 export const PASSWORD_REMINDER_MASK = 0x80000;
+export function actionableAlarmMask(mask: number | null | undefined): number {
+  return ((mask ?? 0) & ~PASSWORD_REMINDER_MASK) >>> 0;
+}
 export function isPasswordReminderAlarm(value: string): boolean {
   return /password|парол|парол/i.test(value);
 }

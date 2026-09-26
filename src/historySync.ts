@@ -93,17 +93,19 @@ async function performSync(baseUrl: string): Promise<{ deviceKey: string; suppor
   const empty: HistoryCacheMeta = {
     deviceKey, deviceName: phone.deviceName, gatewayUrl: normalize(baseUrl), coverage: [],
     phoneOldestTimestamp: phone.oldestTimestamp, phoneNewestTimestamp: phone.newestTimestamp, lastSyncAt: 0,
+    recordCount: phone.recordCount, chemistry: phone.chemistry, cellCount: phone.cellCount,
   };
   cache ??= empty;
+  cache = { ...cache, recordCount: phone.recordCount, chemistry: phone.chemistry ?? cache.chemistry, cellCount: phone.cellCount ?? cache.cellCount };
   latestState = { ...latestState, deviceKey, deviceName: phone.deviceName, phoneRecordCount: phone.recordCount,
     cachedFrom: cache.coverage[0]?.from ?? null, cachedTo: cache.coverage.at(-1)?.to ?? null };
   if (phone.oldestTimestamp == null || phone.newestTimestamp == null) {
-    await saveCacheMeta({ ...cache, phoneOldestTimestamp: null, phoneNewestTimestamp: null, lastSyncAt: Date.now() });
+    await saveCacheMeta({ ...cache, phoneOldestTimestamp: null, phoneNewestTimestamp: null, lastSyncAt: Date.now(), recordCount: phone.recordCount, chemistry: phone.chemistry, cellCount: phone.cellCount });
     publish({ status: "complete" });
     return { deviceKey, supported: true };
   }
   const recentAndCurrent = cache.phoneNewestTimestamp === phone.newestTimestamp && Date.now() - cache.lastSyncAt < 10_000;
-  if (recentAndCurrent) { publish({ status: "complete" }); return { deviceKey, supported: true }; }
+  if (recentAndCurrent) { await saveCacheMeta(cache); publish({ status: "complete" }); return { deviceKey, supported: true }; }
 
   let gaps = missingCoverage(phone.oldestTimestamp, phone.newestTimestamp, cache.coverage);
   const initial = cache.coverage.length === 0;
@@ -120,7 +122,8 @@ async function performSync(baseUrl: string): Promise<{ deviceKey: string; suppor
       downloaded += count; publish({ downloadedRecords: downloaded });
     });
     cache = { ...cache, coverage: mergeCoverage([...cache.coverage, gap]), phoneOldestTimestamp: phone.oldestTimestamp,
-      phoneNewestTimestamp: phone.newestTimestamp, lastSyncAt: Date.now(), deviceName: phone.deviceName, gatewayUrl: normalize(baseUrl) };
+      phoneNewestTimestamp: phone.newestTimestamp, lastSyncAt: Date.now(), deviceName: phone.deviceName, gatewayUrl: normalize(baseUrl),
+      recordCount: phone.recordCount, chemistry: phone.chemistry, cellCount: phone.cellCount };
     await saveCacheMeta(cache);
     publish({ cachedFrom: cache.coverage[0]?.from ?? null, cachedTo: cache.coverage.at(-1)?.to ?? null });
   }

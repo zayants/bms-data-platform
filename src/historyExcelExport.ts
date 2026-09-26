@@ -25,6 +25,8 @@ export type HistoryExportLabels = {
   power: string;
   soc: string;
   temperature: string;
+  temperature1?: string;
+  temperature2?: string;
   imbalance: string;
   balancing: string;
   alarmMask: string;
@@ -78,7 +80,7 @@ function maxCellCount(history: HistoryResponse): number {
 
 export function buildHistoryWorkbook(history: HistoryResponse, labels: HistoryExportLabels, exportedAt = Date.now()): WorkbookSheet[] {
   const cellCount = maxCellCount(history);
-  const commonHeaders = [labels.timestamp, labels.timestampMs, `${labels.voltage} (V)`, `${labels.current} (A)`, `${labels.power} (W)`, `${labels.soc} (%)`, `${labels.temperature} (°C)`, `${labels.imbalance} (mV)`, labels.balancing, labels.alarmMask];
+  const commonHeaders = [labels.timestamp, labels.timestampMs, `${labels.voltage} (V)`, `${labels.current} (A)`, `${labels.power} (W)`, `${labels.soc} (%)`, `${labels.temperature} (°C)`, `${labels.temperature1 ?? `${labels.temperature} 1`} (°C)`, `${labels.temperature2 ?? `${labels.temperature} 2`} (°C)`, `${labels.imbalance} (mV)`, labels.balancing, labels.alarmMask];
   const cellVoltageHeaders = Array.from({ length: cellCount }, (_, index) => `${labels.cellVoltage} C${index + 1} (V)`);
   const resistanceHeaders = Array.from({ length: cellCount }, (_, index) => `${labels.cellResistance} C${index + 1} (mΩ)`);
   const data: ExcelRow[] = [
@@ -86,7 +88,8 @@ export function buildHistoryWorkbook(history: HistoryResponse, labels: HistoryEx
     ...history.points.map((point): ExcelRow => [
       dateCell(point.timestamp), point.timestamp,
       numberCell(point.packVoltageV, "0.00"), numberCell(point.currentA, "0.00"), numberCell(point.powerW, "0"),
-      numberCell(point.socPercent, "0.0"), numberCell(point.temperatureC, "0.0"), numberCell(point.deltaMv, "0"),
+      numberCell(point.socPercent, "0.0"), numberCell(point.temperatureC, "0.0"),
+      numberCell(point.temperature1C ?? point.temperatureC, "0.0"), numberCell(point.temperature2C, "0.0"), numberCell(point.deltaMv, "0"),
       point.balancing, point.alarmMask,
       ...Array.from({ length: cellCount }, (_, index) => numberCell(point.cellsV?.[index], "0.000")),
       ...Array.from({ length: cellCount }, (_, index) => numberCell(point.cellResistanceMOhm?.[index], "0.00")),
@@ -119,7 +122,7 @@ export function buildHistoryWorkbook(history: HistoryResponse, labels: HistoryEx
     [labels.aggregationInterval, numberCell(history.bucketMs / 1000, "0.0")],
   ];
 
-  const dataColumns = [{ width: 21 }, { width: 16 }, ...Array.from({ length: 8 }, () => ({ width: 16 })), ...Array.from({ length: cellCount * 2 }, () => ({ width: 18 }))];
+  const dataColumns = [{ width: 21 }, { width: 16 }, ...Array.from({ length: 10 }, () => ({ width: 16 })), ...Array.from({ length: cellCount * 2 }, () => ({ width: 18 }))];
   return [
     { data, sheet: labels.dataSheet, columns: dataColumns },
     { data: socData, sheet: labels.socSheet, columns: [{ width: 21 }, { width: 16 }, ...Array.from({ length: 8 + cellCount }, () => ({ width: 18 }))] },
@@ -133,4 +136,31 @@ export async function exportHistoryWorkbook(history: HistoryResponse, labels: Hi
   const sheets = buildHistoryWorkbook(history, labels);
   const date = new Date().toISOString().slice(0, 10);
   await writeExcelFile(sheets).toFile(`bms-history-${date}.xlsx`);
+}
+
+export async function exportMultipleHistoryWorkbooks(
+  histories: Array<{ name: string; history: HistoryResponse }>,
+  labels: HistoryExportLabels,
+): Promise<void> {
+  const { default: writeExcelFile } = await import("write-excel-file/browser");
+  const used = new Set<string>();
+  const safeSheetName = (value: string): string => {
+    const base = value.replace(/[\\/?*:[\]]/g, " ").trim().slice(0, 31) || "Battery";
+    let result = base;
+    let suffix = 2;
+    while (used.has(result)) {
+      const tail = ` ${suffix++}`;
+      result = `${base.slice(0, 31 - tail.length)}${tail}`;
+    }
+    used.add(result);
+    return result;
+  };
+  const sheets = histories.flatMap(({ name, history }, batteryIndex) =>
+    buildHistoryWorkbook(history, labels).map((sheet) => ({
+      ...sheet,
+      sheet: safeSheetName(`B${batteryIndex + 1} ${name} ${sheet.sheet}`),
+    })),
+  );
+  const date = new Date().toISOString().slice(0, 10);
+  await writeExcelFile(sheets).toFile(`bms-history-all-${date}.xlsx`);
 }

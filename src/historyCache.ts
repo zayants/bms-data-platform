@@ -12,6 +12,9 @@ export type HistoryCacheMeta = {
   phoneOldestTimestamp: number | null;
   phoneNewestTimestamp: number | null;
   lastSyncAt: number;
+  recordCount?: number;
+  chemistry?: string | null;
+  cellCount?: number | null;
 };
 
 type PointRow = HistoryPoint & { id: string; deviceKey: string };
@@ -86,11 +89,43 @@ export async function loadCacheMeta(deviceKey: string): Promise<HistoryCacheMeta
   return (await requestResult(transaction.objectStore("meta").get(deviceKey)) as HistoryCacheMeta | undefined) ?? null;
 }
 
+/** Lists every battery whose history has been synchronized on this computer. */
+export async function listCacheMeta(): Promise<HistoryCacheMeta[]> {
+  const database = await openDatabase();
+  const transaction = database.transaction("meta", "readonly");
+  const items = await requestResult(transaction.objectStore("meta").getAll()) as HistoryCacheMeta[];
+  return items.sort((a, b) => b.lastSyncAt - a.lastSyncAt);
+}
+
 export async function saveCacheMeta(meta: HistoryCacheMeta): Promise<void> {
   const database = await openDatabase();
   const transaction = database.transaction("meta", "readwrite");
   transaction.objectStore("meta").put({ ...meta, coverage: mergeCoverage(meta.coverage) });
   await transactionDone(transaction);
+}
+
+/** Removes one battery profile and only its locally cached records. */
+export async function deleteCachedBattery(deviceKey: string): Promise<void> {
+  const database = await openDatabase();
+  const transaction = database.transaction(["points", "socEvents", "connectionEvents", "chargeSessions", "meta"], "readwrite");
+  const range = IDBKeyRange.bound([deviceKey, -Number.MAX_SAFE_INTEGER], [deviceKey, Number.MAX_SAFE_INTEGER]);
+  const deletions = (["points", "socEvents", "connectionEvents", "chargeSessions"] as const).map((storeName) => {
+    const index = transaction.objectStore(storeName).index("deviceTimestamp");
+    return new Promise<void>((resolve, reject) => {
+      const request = index.openKeyCursor(range);
+      request.onerror = () => reject(request.error ?? new Error("Unable to delete cached battery"));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) { resolve(); return; }
+        transaction.objectStore(storeName).delete(cursor.primaryKey);
+        cursor.continue();
+      };
+    });
+  });
+  transaction.objectStore("meta").delete(deviceKey);
+  await Promise.all(deletions);
+  await transactionDone(transaction);
+  window.dispatchEvent(new CustomEvent("bms-history-cache-updated", { detail: { deviceKey, deleted: true } }));
 }
 
 export async function storeHistoryPoints(deviceKey: string, points: HistoryPoint[]): Promise<void> {
@@ -157,7 +192,7 @@ export async function readCachedHistory(deviceKey: string, from: number, to: num
 }
 
 /** Create a portable SQLite-compatible SQL dump of every record in the local cache. */
-export async function exportHistoryDatabaseSql(): Promise<{ sql: string; recordCount: number }> {
+export async function exportHistoryDatabaseSql(deviceKey?: string): Promise<{ sql: string; recordCount: number }> {
   const database = await openDatabase();
   const stores = ["points", "socEvents", "connectionEvents", "chargeSessions", "meta"] as const;
   const rows = await Promise.all(stores.map(async (name) => {
@@ -171,23 +206,23 @@ export async function exportHistoryDatabaseSql(): Promise<{ sql: string; recordC
     return `'${String(typeof value === "object" ? JSON.stringify(value) : value).replaceAll("'", "''")}'`;
   };
   const columns: Record<typeof stores[number], string[]> = {
-    points: ["id", "device_key", "timestamp", "pack_voltage_v", "current_a", "soc_percent", "power_w", "temperature_c", "mos_temperature_c", "delta_mv", "alarm_mask", "cells_v"],
+    points: ["id", "device_key", "timestamp", "pack_voltage_v", "current_a", "soc_percent", "power_w", "temperature_c", "temperature_1_c", "temperature_2_c", "delta_mv", "alarm_mask", "cells_v"],
     socEvents: ["id", "device_key", "timestamp", "soc_percent", "previous_soc_percent", "direction", "pack_voltage_v", "current_a", "delta_mv", "cells_v"],
     connectionEvents: ["id", "device_key", "timestamp", "type", "duration_ms", "bms_name", "gatt_status"],
     chargeSessions: ["id", "device_key", "source_id", "started_at", "ended_at", "delivered_ah", "max_current_a", "bms_name"],
-    meta: ["device_key", "device_name", "gateway_url", "coverage", "phone_oldest_timestamp", "phone_newest_timestamp", "last_sync_at"],
+    meta: ["device_key", "device_name", "gateway_url", "coverage", "phone_oldest_timestamp", "phone_newest_timestamp", "last_sync_at", "record_count", "chemistry", "cell_count"],
   };
   const valueFor = (store: typeof stores[number], row: Record<string, unknown>, column: string): unknown => {
-    const map: Record<string, string> = { device_key: "deviceKey", source_id: "sourceId", pack_voltage_v: "packVoltageV", current_a: "currentA", soc_percent: "socPercent", power_w: "powerW", temperature_c: "temperatureC", mos_temperature_c: "mosTemperatureC", delta_mv: "deltaMv", alarm_mask: "alarmMask", cells_v: "cellsV", previous_soc_percent: "previousSocPercent", duration_ms: "durationMs", bms_name: "bmsName", gatt_status: "gattStatus", started_at: "startedAt", ended_at: "endedAt", delivered_ah: "deliveredAh", max_current_a: "maxCurrentA", device_name: "deviceName", gateway_url: "gatewayUrl", phone_oldest_timestamp: "phoneOldestTimestamp", phone_newest_timestamp: "phoneNewestTimestamp", last_sync_at: "lastSyncAt" };
+    const map: Record<string, string> = { device_key: "deviceKey", source_id: "sourceId", pack_voltage_v: "packVoltageV", current_a: "currentA", soc_percent: "socPercent", power_w: "powerW", temperature_c: "temperatureC", temperature_1_c: "temperature1C", temperature_2_c: "temperature2C", delta_mv: "deltaMv", alarm_mask: "alarmMask", cells_v: "cellsV", previous_soc_percent: "previousSocPercent", duration_ms: "durationMs", bms_name: "bmsName", gatt_status: "gattStatus", started_at: "startedAt", ended_at: "endedAt", delivered_ah: "deliveredAh", max_current_a: "maxCurrentA", device_name: "deviceName", gateway_url: "gatewayUrl", phone_oldest_timestamp: "phoneOldestTimestamp", phone_newest_timestamp: "phoneNewestTimestamp", last_sync_at: "lastSyncAt", record_count: "recordCount", cell_count: "cellCount" };
     return row[column] ?? row[map[column] ?? column];
   };
   const tableNames: Record<typeof stores[number], string> = { points: "history_points", socEvents: "soc_events", connectionEvents: "connection_events", chargeSessions: "charge_sessions", meta: "cache_meta" };
   const schema = [
-    "CREATE TABLE IF NOT EXISTS history_points (id TEXT PRIMARY KEY, device_key TEXT NOT NULL, timestamp INTEGER NOT NULL, pack_voltage_v REAL, current_a REAL, soc_percent REAL, power_w REAL, temperature_c REAL, mos_temperature_c REAL, delta_mv REAL, alarm_mask INTEGER, cells_v TEXT);",
+    "CREATE TABLE IF NOT EXISTS history_points (id TEXT PRIMARY KEY, device_key TEXT NOT NULL, timestamp INTEGER NOT NULL, pack_voltage_v REAL, current_a REAL, soc_percent REAL, power_w REAL, temperature_c REAL, temperature_1_c REAL, temperature_2_c REAL, delta_mv REAL, alarm_mask INTEGER, cells_v TEXT);",
     "CREATE TABLE IF NOT EXISTS soc_events (id TEXT PRIMARY KEY, device_key TEXT NOT NULL, timestamp INTEGER NOT NULL, soc_percent REAL, previous_soc_percent REAL, direction TEXT, pack_voltage_v REAL, current_a REAL, delta_mv REAL, cells_v TEXT);",
     "CREATE TABLE IF NOT EXISTS connection_events (id TEXT PRIMARY KEY, device_key TEXT NOT NULL, timestamp INTEGER NOT NULL, type TEXT, duration_ms INTEGER, bms_name TEXT, gatt_status INTEGER);",
     "CREATE TABLE IF NOT EXISTS charge_sessions (id TEXT PRIMARY KEY, device_key TEXT NOT NULL, source_id TEXT, started_at INTEGER, ended_at INTEGER, delivered_ah REAL, max_current_a REAL, bms_name TEXT);",
-    "CREATE TABLE IF NOT EXISTS cache_meta (device_key TEXT PRIMARY KEY, device_name TEXT, gateway_url TEXT, coverage TEXT, phone_oldest_timestamp INTEGER, phone_newest_timestamp INTEGER, last_sync_at INTEGER);",
+    "CREATE TABLE IF NOT EXISTS cache_meta (device_key TEXT PRIMARY KEY, device_name TEXT, gateway_url TEXT, coverage TEXT, phone_oldest_timestamp INTEGER, phone_newest_timestamp INTEGER, last_sync_at INTEGER, record_count INTEGER, chemistry TEXT, cell_count INTEGER);",
   ];
   const statements = [...schema, "BEGIN TRANSACTION;"];
   let recordCount = 0;
@@ -195,6 +230,7 @@ export async function exportHistoryDatabaseSql(): Promise<{ sql: string; recordC
     const table = tableNames[store];
     const cols = columns[store];
     for (const value of values as Record<string, unknown>[]) {
+      if (deviceKey && value.deviceKey !== deviceKey) continue;
       statements.push(`INSERT OR REPLACE INTO ${table} (${cols.join(", ")}) VALUES (${cols.map((column) => quote(valueFor(store, value, column))).join(", ")});`);
       recordCount += 1;
     }
